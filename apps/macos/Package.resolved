@@ -32,8 +32,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jenalab-com/SwiftTerm",
       "state" : {
-        "revision" : "43a2e5299b1a91fdeea8c17b9c49b134744aaf7a",
-        "version" : "1.99.2-jenafile.1"
+        "revision" : "0c9a171180e39755df481c7fc863451cd5aad228",
+        "version" : "1.99.2-jenafile.2"
       }
     }
   ],

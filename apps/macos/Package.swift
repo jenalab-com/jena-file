@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     dependencies: [
         // jenalab fork: keeps the caret visible during Korean IME composition (ADR-008).
-        .package(url: "https://github.com/jenalab-com/SwiftTerm", exact: "1.99.2-jenafile.1"),
+        .package(url: "https://github.com/jenalab-com/SwiftTerm", exact: "1.99.2-jenafile.2"),
     ],
     targets: [
         // Built by scripts/build-core.sh (not committed).

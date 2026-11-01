@@ -138,7 +138,8 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
         Task {
             do {
                 terminal = try await core.openTerminal(connection: connection, cols: UInt32(size.cols),
-                                                       rows: UInt32(size.rows), startDir: startDir, sink: output)
+                                                       rows: UInt32(size.rows), startDir: startDir,
+                                                       lang: TerminalLocale.lang, sink: output)
                 focus()
             } catch {
                 markEnded(UserMessage.describe(error))

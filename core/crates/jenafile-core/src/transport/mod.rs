@@ -285,11 +285,18 @@ impl Session {
         cols: u32,
         rows: u32,
         start_dir: Option<String>,
+        lang: Option<String>,
         sink: std::sync::Arc<dyn TerminalSink>,
     ) -> Result<tokio::sync::mpsc::UnboundedSender<TerminalInput>, CoreError> {
         let server = |e: russh::Error| CoreError::Server { hop, message: e.to_string(), detail: None };
         let ch = self.handle.channel_open_session().await.map_err(server)?;
         let (mut read, write) = ch.split();
+        if let Some(lang) = lang {
+            // Like OpenSSH's `SendEnv LANG`: without it the shell runs in the POSIX
+            // locale and swallows multibyte input (Korean never echoed back).
+            // Servers accept it only with `AcceptEnv LANG` (Debian/Ubuntu default).
+            write.set_env(false, "LANG", lang).await.map_err(server)?;
+        }
         write.request_pty(true, "xterm-256color", cols, rows, 0, 0, &[]).await.map_err(server)?;
         write.request_shell(true).await.map_err(server)?;
         if let Some(dir) = start_dir {

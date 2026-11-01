@@ -165,7 +165,7 @@ async fn terminal_on_same_session_as_sftp() {
     let (m, _) = setup(dir.path(), PromptAnswer::Accept, &["jena-test"], 3);
     let id = m.connect(endpoint()).await.unwrap();
     let sink = Arc::new(TermCapture { out: Mutex::new(vec![]), closed: Mutex::new(None) });
-    let term = m.open_terminal(id, 100, 30, Some("/etc".into()), sink.clone()).await.unwrap();
+    let term = m.open_terminal(id, 100, 30, Some("/etc".into()), Some("ko_KR.UTF-8".into()), sink.clone()).await.unwrap();
 
     // Started in the requested folder, PTY has the requested size.
     m.terminal_write(term, b"pwd; stty size; echo marker-$((40+2))\n".to_vec());
@@ -182,9 +182,15 @@ async fn terminal_on_same_session_as_sftp() {
     m.terminal_write(term, b"stty size; echo resized-ok\n".to_vec());
     assert!(sink.wait_for("resized-ok").await.contains("40 120"));
 
-    // UTF-8 (Korean) passes through untouched.
-    m.terminal_write(term, "echo 한글-확인\n".as_bytes().to_vec());
-    sink.wait_for("한글-확인").await;
+    // LANG reached the shell, and typed Korean is echoed back by the line editor
+    // (in the POSIX locale bash only beeps and drops it — the bug this guards).
+    m.terminal_write(term, b"echo lang=$LANG\n".to_vec());
+    sink.wait_for("lang=ko_KR.UTF-8").await;
+    sink.out.lock().unwrap().clear();
+    m.terminal_write(term, "echo 안녕하세요-입력".as_bytes().to_vec());
+    sink.wait_for("안녕하세요-입력").await; // echoed while typing (before Enter)
+    m.terminal_write(term, b"\n".to_vec());
+    sink.wait_for("안녕하세요-입력\r\n").await; // and printed by echo
 
     // Exit status is reported.
     m.terminal_write(term, b"exit 3\n".to_vec());
@@ -192,6 +198,6 @@ async fn terminal_on_same_session_as_sftp() {
         if sink.closed.lock().unwrap().is_some() { break; }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    assert_eq!(*sink.closed.lock().unwrap(), Some(Some(3)));
+    assert_eq!(*sink.closed.lock().unwrap(), Some(Some(3)), "{:?}", String::from_utf8_lossy(&sink.out.lock().unwrap()));
     m.disconnect(id).await;
 }

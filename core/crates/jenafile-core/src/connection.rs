@@ -38,6 +38,7 @@ enum Command {
         cols: u32,
         rows: u32,
         start_dir: Option<String>,
+        lang: Option<String>,
         sink: Arc<dyn TerminalSink>,
         reply: oneshot::Sender<Result<mpsc::UnboundedSender<TerminalInput>, CoreError>>,
     },
@@ -166,10 +167,11 @@ impl ConnectionManager {
         cols: u32,
         rows: u32,
         start_dir: Option<String>,
+        lang: Option<String>,
         sink: Arc<dyn TerminalSink>,
     ) -> Result<TerminalId, CoreError> {
         let (reply, rx) = oneshot::channel();
-        self.send(id, Command::OpenTerminal { cols, rows, start_dir, sink, reply }).await?;
+        self.send(id, Command::OpenTerminal { cols, rows, start_dir, lang, sink, reply }).await?;
         let input = rx.await.map_err(|_| CoreError::NotConnected(id))??;
         let terminal = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         self.inner.terminals.lock().unwrap().insert(terminal, (id, input));
@@ -214,8 +216,8 @@ async fn run_actor(id: ConnectionId, session: Session, mut rx: mpsc::Receiver<Co
             cmd = rx.recv() => match cmd {
                 Some(Command::Home(reply)) => { let _ = reply.send(session.home(Hop::Target).await); }
                 Some(Command::List(path, reply)) => { let _ = reply.send(session.list(Hop::Target, &path).await); }
-                Some(Command::OpenTerminal { cols, rows, start_dir, sink, reply }) => {
-                    let _ = reply.send(session.open_terminal(Hop::Target, cols, rows, start_dir, sink).await);
+                Some(Command::OpenTerminal { cols, rows, start_dir, lang, sink, reply }) => {
+                    let _ = reply.send(session.open_terminal(Hop::Target, cols, rows, start_dir, lang, sink).await);
                 }
                 Some(Command::Close(reply)) => {
                     session.close().await;

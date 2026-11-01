@@ -183,15 +183,17 @@ impl Core {
     }
 
     /// Opens a shell on the connection's SSH session. `start_dir`: cd there first.
+    /// `lang`: sent as LANG (like `ssh` SendEnv), e.g. "ko_KR.UTF-8".
     pub async fn open_terminal(
         &self,
         connection: u64,
         cols: u32,
         rows: u32,
         start_dir: Option<String>,
+        lang: Option<String>,
         sink: Arc<dyn TerminalSink>,
     ) -> Result<u64, CoreError> {
-        Ok(self.manager.open_terminal(connection, cols, rows, start_dir, Arc::new(TerminalBridge(sink))).await?)
+        Ok(self.manager.open_terminal(connection, cols, rows, start_dir, lang, Arc::new(TerminalBridge(sink))).await?)
     }
 
     /// Synchronous on purpose: keystrokes must keep the caller's order.

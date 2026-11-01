@@ -39,3 +39,11 @@ final class ShellQuoteTests: XCTestCase {
         XCTAssertEqual(ShellQuote.quote("/tmp/it's here"), "'/tmp/it'\\''s here'")
     }
 }
+
+final class TerminalLocaleTests: XCTestCase {
+    func testLangFromLocale() {
+        XCTAssertEqual(TerminalLocale.lang(for: Locale(identifier: "ko_KR")), "ko_KR.UTF-8")
+        XCTAssertEqual(TerminalLocale.lang(for: Locale(identifier: "en_US")), "en_US.UTF-8")
+        XCTAssertEqual(TerminalLocale.lang(for: Locale(identifier: "ko")), "en_US.UTF-8")
+    }
+}
