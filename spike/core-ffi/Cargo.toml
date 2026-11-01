@@ -1,0 +1,20 @@
+[package]
+name = "jenafile_core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+# staticlib → xcframework for SwiftPM (same pattern as jena-note's Kiwi), cdylib for bindgen
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen-swift"
+path = "src/bin/uniffi-bindgen-swift.rs"
+
+[dependencies]
+russh = "0.65.0"
+russh-sftp = "3.0.1"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["full"] }
+uniffi = { version = "0.32.2", features = ["tokio", "cli"] }
+

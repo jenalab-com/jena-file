@@ -1,0 +1,15 @@
+# bastion: reachable from the host on 127.0.0.1:2201
+# app01:   internal only, reachable through bastion (like <내부IP>:22)
+services:
+  bastion:
+    build: .
+    hostname: bastion
+    ports: ["127.0.0.1:2201:22"]
+    cap_add: [NET_ADMIN]  # lets the spike add artificial latency with tc
+    networks: [internal]
+  app01:
+    build: .
+    hostname: app01
+    networks: [internal]
+networks:
+  internal: {}

@@ -1,0 +1,7 @@
+russh-spike/target/
+docker/spike_key
+core-ffi/target/
+core-ffi/out/
+swift-host/.build/
+term-host/.build/
+korean*.txt

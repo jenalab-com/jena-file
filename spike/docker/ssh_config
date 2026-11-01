@@ -1,0 +1,14 @@
+Host *
+  IdentityFile /Volumes/Backup/Project/jena/source/jena-file/spike/docker/spike_key
+  IdentitiesOnly yes
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+  LogLevel ERROR
+Host spike-bastion
+  HostName 127.0.0.1
+  Port 2201
+  User jena
+Host spike-app01
+  HostName app01
+  User jena
+  ProxyJump spike-bastion
