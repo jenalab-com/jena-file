@@ -1,5 +1,6 @@
 import AppKit
 import JenaFileCore
+import JenaFileKit
 
 /// Shows core prompts as window sheets, one at a time (ARCHITECTURE §5).
 /// Sheets keep the run loop alive, so events keep flowing while the user decides.
@@ -91,6 +92,36 @@ final class PromptPresenter {
             alert.addButton(withTitle: "접속")
             alert.addButton(withTitle: "취소")
             return (alert, { $0 == .alertFirstButtonReturn ? .secret(value: field.stringValue) : .cancel })
+
+        case .conflict(let direction, let destination, let sourceSize, let sourceModified,
+                       let destinationSize, let destinationModified, let canResume):
+            alert.messageText = "같은 이름의 파일이 이미 있어요"
+            let whereText = direction == .upload ? "서버" : "이 Mac"
+            func line(_ label: String, _ size: UInt64, _ modified: UInt64?) -> String {
+                "\(label): \(Format.size(size, isDir: false))" + (modified.map { " · \(Format.date($0))" } ?? "")
+            }
+            var info = "\(whereText)의 \(destination)\n\n"
+            info += line("보낼 파일", sourceSize, sourceModified) + "\n"
+            info += line("이미 있는 파일", destinationSize, destinationModified)
+            if canResume { info += "\n\n이미 있는 파일이 더 작아요. 받다 만 파일이면 이어받기를 고르세요." }
+            alert.informativeText = info
+            var actions: [ConflictAction] = [.overwrite]
+            alert.addButton(withTitle: "덮어쓰기")
+            if canResume {
+                alert.addButton(withTitle: "이어받기")
+                actions.append(.resume)
+            }
+            alert.addButton(withTitle: "이름 바꿔 저장")
+            actions.append(.rename)
+            alert.addButton(withTitle: "건너뛰기")
+            actions.append(.skip)
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "나머지 파일에도 같은 선택 적용"
+            return (alert, { response in
+                let i = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+                guard i >= 0, i < actions.count else { return .cancel }
+                return .conflict(action: actions[i], applyToAll: alert.suppressionButton?.state == .on)
+            })
 
         case .keyboardInteractive(let name, let instructions, let prompts):
             alert.messageText = name.isEmpty ? "서버가 추가 인증을 요청해요" : name

@@ -114,11 +114,58 @@ pub enum LogLevel {
 }
 
 #[derive(uniffi::Enum)]
+pub enum Direction {
+    Upload,
+    Download,
+}
+
+#[derive(uniffi::Enum)]
+pub enum TransferState {
+    Queued,
+    Running,
+    Paused,
+    Done,
+    Skipped,
+    Cancelled,
+    Failed { message: String },
+}
+
+#[derive(uniffi::Record)]
+pub struct TransferInfo {
+    pub id: u64,
+    pub connection: u64,
+    pub direction: Direction,
+    pub local_path: String,
+    pub remote_path: String,
+    pub size: u64,
+    pub transferred: u64,
+    pub bytes_per_sec: u64,
+    pub state: TransferState,
+}
+
+#[derive(uniffi::Enum)]
+pub enum ConflictAction {
+    Overwrite,
+    Resume,
+    Rename,
+    Skip,
+}
+
+#[derive(uniffi::Enum)]
 pub enum PromptKind {
     HostKeyUnknown { host: String, port: u16, key: HostKeyInfo },
     HostKeyChanged { host: String, port: u16, key: HostKeyInfo },
     Password { user: String, host: String, attempt: u32 },
     KeyboardInteractive { name: String, instructions: String, prompts: Vec<InteractivePrompt> },
+    Conflict {
+        direction: Direction,
+        destination: String,
+        source_size: u64,
+        source_modified: Option<u64>,
+        destination_size: u64,
+        destination_modified: Option<u64>,
+        can_resume: bool,
+    },
 }
 
 #[derive(uniffi::Enum)]
@@ -127,6 +174,7 @@ pub enum PromptAnswer {
     Reject,
     Secret { value: String },
     Responses { values: Vec<String> },
+    Conflict { action: ConflictAction, apply_to_all: bool },
     Cancel,
 }
 
@@ -135,6 +183,7 @@ pub enum CoreEvent {
     StateChanged { connection: u64, state: ConnectionState },
     Log { connection: u64, hop: Hop, level: LogLevel, message: String },
     PromptRequested { prompt: u64, connection: u64, hop: Hop, kind: PromptKind },
+    Transfer { info: TransferInfo },
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -153,6 +202,8 @@ pub enum CoreError {
     Server { hop: Hop, message: String, detail: Option<String> },
     #[error("bastion could not reach {host}:{port}")]
     TunnelFailed { host: String, port: u16, message: String },
+    #[error("{message}")]
+    Local { message: String },
     #[error("cancelled")]
     Cancelled,
     #[error("not connected")]
@@ -246,6 +297,37 @@ impl Core {
         Ok(self.manager.open_terminal(connection, cols, rows, start_dir, lang, Arc::new(TerminalBridge(sink))).await?)
     }
 
+    /// Queue uploads of local files / folders into `remote_dir`.
+    pub async fn upload(&self, connection: u64, local_paths: Vec<String>, remote_dir: String) -> Result<Vec<u64>, CoreError> {
+        Ok(self.manager.upload(connection, local_paths.into_iter().map(PathBuf::from).collect(), remote_dir).await?)
+    }
+
+    /// Queue downloads of remote files / folders into `local_dir`.
+    pub async fn download(&self, connection: u64, remote_paths: Vec<String>, local_dir: String) -> Result<Vec<u64>, CoreError> {
+        Ok(self.manager.download(connection, remote_paths, PathBuf::from(local_dir)).await?)
+    }
+
+    pub fn pause_transfer(&self, transfer: u64) {
+        self.manager.pause_transfer(transfer)
+    }
+
+    /// Resume / retry from the destination's current size.
+    pub fn resume_transfer(&self, transfer: u64) {
+        self.manager.resume_transfer(transfer)
+    }
+
+    pub fn cancel_transfer(&self, transfer: u64) {
+        self.manager.cancel_transfer(transfer)
+    }
+
+    pub fn clear_finished_transfers(&self) {
+        self.manager.clear_finished_transfers()
+    }
+
+    pub fn transfers_active(&self) -> bool {
+        self.manager.transfers_active()
+    }
+
     /// Synchronous on purpose: keystrokes must keep the caller's order.
     pub fn terminal_write(&self, terminal: u64, data: Vec<u8>) {
         self.manager.terminal_write(terminal, data)
@@ -308,6 +390,7 @@ impl From<jc::CoreError> for CoreError {
             E::PasswordExpired { hop } => CoreError::PasswordExpired { hop: hop.into() },
             E::Server { hop, message, detail } => CoreError::Server { hop: hop.into(), message, detail },
             E::TunnelFailed { host, port, message } => CoreError::TunnelFailed { host, port, message },
+            E::Local { message } => CoreError::Local { message },
             E::Cancelled => CoreError::Cancelled,
             E::NotConnected(connection) => CoreError::NotConnected { connection },
             E::LimitReached { max } => CoreError::LimitReached { max },
@@ -345,6 +428,17 @@ impl From<jc::PromptKind> for PromptKind {
             K::HostKeyUnknown { host, port, key } => PromptKind::HostKeyUnknown { host, port, key: key.into() },
             K::HostKeyChanged { host, port, key } => PromptKind::HostKeyChanged { host, port, key: key.into() },
             K::Password { user, host, attempt } => PromptKind::Password { user, host, attempt },
+            K::Conflict { direction, destination, source_size, source_modified, destination_size, destination_modified, can_resume } => {
+                PromptKind::Conflict {
+                    direction: direction.into(),
+                    destination,
+                    source_size,
+                    source_modified,
+                    destination_size,
+                    destination_modified,
+                    can_resume,
+                }
+            }
             K::KeyboardInteractive { name, instructions, prompts } => PromptKind::KeyboardInteractive {
                 name,
                 instructions,
@@ -361,6 +455,15 @@ impl From<PromptAnswer> for jc::PromptAnswer {
             PromptAnswer::Reject => jc::PromptAnswer::Reject,
             PromptAnswer::Secret { value } => jc::PromptAnswer::Secret(value),
             PromptAnswer::Responses { values } => jc::PromptAnswer::Responses(values),
+            PromptAnswer::Conflict { action, apply_to_all } => jc::PromptAnswer::Conflict {
+                action: match action {
+                    ConflictAction::Overwrite => jc::ConflictAction::Overwrite,
+                    ConflictAction::Resume => jc::ConflictAction::Resume,
+                    ConflictAction::Rename => jc::ConflictAction::Rename,
+                    ConflictAction::Skip => jc::ConflictAction::Skip,
+                },
+                apply_to_all,
+            },
             PromptAnswer::Cancel => jc::PromptAnswer::Cancel,
         }
     }
@@ -376,6 +479,7 @@ impl From<jc::Event> for CoreEvent {
             jc::Event::PromptRequested { prompt, connection, hop, kind } => {
                 CoreEvent::PromptRequested { prompt, connection, hop: hop.into(), kind: kind.into() }
             }
+            jc::Event::Transfer(t) => CoreEvent::Transfer { info: t.into() },
         }
     }
 }
@@ -389,6 +493,36 @@ impl From<jc::RemoteEntry> for RemoteEntry {
             is_symlink: e.is_symlink,
             modified: e.modified,
             permissions: e.permissions,
+        }
+    }
+}
+
+impl From<jc::Direction> for Direction {
+    fn from(d: jc::Direction) -> Self {
+        match d { jc::Direction::Upload => Direction::Upload, jc::Direction::Download => Direction::Download }
+    }
+}
+
+impl From<jc::TransferInfo> for TransferInfo {
+    fn from(t: jc::TransferInfo) -> Self {
+        TransferInfo {
+            id: t.id,
+            connection: t.connection,
+            direction: t.direction.into(),
+            local_path: t.local_path,
+            remote_path: t.remote_path,
+            size: t.size,
+            transferred: t.transferred,
+            bytes_per_sec: t.bytes_per_sec,
+            state: match t.state {
+                jc::TransferState::Queued => TransferState::Queued,
+                jc::TransferState::Running => TransferState::Running,
+                jc::TransferState::Paused => TransferState::Paused,
+                jc::TransferState::Done => TransferState::Done,
+                jc::TransferState::Skipped => TransferState::Skipped,
+                jc::TransferState::Cancelled => TransferState::Cancelled,
+                jc::TransferState::Failed { message } => TransferState::Failed { message },
+            },
         }
     }
 }

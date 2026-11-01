@@ -90,7 +90,8 @@ impl client::Handler for Handler {
 pub(crate) struct Session {
     handle: Handle<Handler>,
     /// None for terminal-only sessions (bastions, password change).
-    sftp: Option<SftpSession>,
+    /// Shared with transfer workers so copies do not queue behind the actor.
+    sftp: Option<Arc<SftpSession>>,
 }
 
 /// A direct-tcpip channel through a bastion, ready to carry the next SSH session.
@@ -151,7 +152,7 @@ async fn finish(
     authenticate(&mut handle, ctx).await?;
     let sftp = if with_sftp {
         on_step(crate::events::ConnectStep::Sftp);
-        Some(open_sftp(&handle, ctx.hop).await?)
+        Some(Arc::new(open_sftp(&handle, ctx.hop).await?))
     } else {
         None
     };
@@ -260,7 +261,13 @@ pub(crate) fn classify_sftp_failure(hop: Hop, error: &str, server_said: Option<S
 
 impl Session {
     fn sftp(&self, hop: Hop) -> Result<&SftpSession, CoreError> {
-        self.sftp.as_ref().ok_or(CoreError::Server { hop, message: "this connection has no SFTP".into(), detail: None })
+        self.sftp.as_deref().ok_or(CoreError::Server { hop, message: "this connection has no SFTP".into(), detail: None })
+    }
+
+    /// A handle transfer workers can use concurrently with the actor.
+    pub(crate) fn files(&self, hop: Hop) -> Result<Files, CoreError> {
+        self.sftp(hop)?;
+        Ok(Files { sftp: self.sftp.clone().unwrap(), hop })
     }
 
     /// Ask the bastion to open a channel to host:port (what `ssh -L` / `-J` do).
@@ -410,6 +417,126 @@ impl Session {
 /// Single-quote for POSIX shells: 'it'\''s' style.
 pub(crate) fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Copy buffer for transfers; SFTP pipelining (SFTP_IN_FLIGHT) does the rest.
+const COPY_CHUNK: usize = 256 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RemoteStat {
+    pub size: u64,
+    pub modified: Option<u64>,
+    pub is_dir: bool,
+}
+
+/// SFTP file operations for transfers. Cheap to clone.
+#[derive(Clone)]
+pub(crate) struct Files {
+    sftp: Arc<SftpSession>,
+    hop: Hop,
+}
+
+fn local_err(e: std::io::Error) -> CoreError {
+    CoreError::Local { message: e.to_string() }
+}
+
+impl Files {
+    /// `None` when the path does not exist.
+    pub(crate) async fn stat(&self, path: &str) -> Result<Option<RemoteStat>, CoreError> {
+        match self.sftp.metadata(path).await {
+            Ok(m) => Ok(Some(RemoteStat { size: m.size.unwrap_or(0), modified: m.mtime.map(u64::from), is_dir: m.is_dir() })),
+            Err(russh_sftp::client::error::Error::Status(s)) if s.status_code == russh_sftp::protocol::StatusCode::NoSuchFile => Ok(None),
+            Err(e) => Err(sftp_err(self.hop, e)),
+        }
+    }
+
+    /// `mkdir -p`
+    pub(crate) async fn mkdir_all(&self, path: &str) -> Result<(), CoreError> {
+        let mut cur = String::new();
+        for part in path.split('/').filter(|p| !p.is_empty()) {
+            cur.push('/');
+            cur.push_str(part);
+            if self.stat(&cur).await?.is_none() {
+                self.sftp.create_dir(cur.as_str()).await.map_err(|e| sftp_err(self.hop, e))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Every entry under `root` as (path relative to root, stat), folders included.
+    pub(crate) async fn walk(&self, root: &str) -> Result<Vec<(String, RemoteStat)>, CoreError> {
+        let mut out = Vec::new();
+        let mut stack = vec![String::new()];
+        while let Some(rel) = stack.pop() {
+            let dir = if rel.is_empty() { root.to_string() } else { format!("{}/{}", root.trim_end_matches('/'), rel) };
+            for e in self.sftp.read_dir(&dir).await.map_err(|e| sftp_err(self.hop, e))? {
+                let name = e.file_name();
+                if name == "." || name == ".." {
+                    continue;
+                }
+                let m = e.metadata();
+                let child = if rel.is_empty() { name } else { format!("{rel}/{name}") };
+                let st = RemoteStat { size: m.size.unwrap_or(0), modified: m.mtime.map(u64::from), is_dir: m.is_dir() };
+                if st.is_dir {
+                    stack.push(child.clone());
+                }
+                out.push((child, st));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Uploads `local` to `remote` starting at `offset` (0 = replace the file).
+    pub(crate) async fn upload(&self, local: &std::path::Path, remote: &str, offset: u64, progress: &std::sync::atomic::AtomicU64) -> Result<(), CoreError> {
+        use russh_sftp::protocol::OpenFlags;
+        use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+        let mut src = tokio::fs::File::open(local).await.map_err(local_err)?;
+        src.seek(std::io::SeekFrom::Start(offset)).await.map_err(local_err)?;
+        let flags = if offset == 0 { OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE } else { OpenFlags::WRITE };
+        let mut dst = self.sftp.open_with_flags(remote, flags).await.map_err(|e| sftp_err(self.hop, e))?;
+        let io = |e: std::io::Error| CoreError::Server { hop: self.hop, message: e.to_string(), detail: None };
+        if offset > 0 {
+            dst.seek(std::io::SeekFrom::Start(offset)).await.map_err(io)?;
+        }
+        let mut buf = vec![0u8; COPY_CHUNK];
+        loop {
+            let n = src.read(&mut buf).await.map_err(local_err)?;
+            if n == 0 {
+                break;
+            }
+            dst.write_all(&buf[..n]).await.map_err(io)?;
+            progress.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+        }
+        dst.shutdown().await.map_err(io)
+    }
+
+    /// Downloads `remote` into `local` starting at `offset` (0 = replace the file).
+    pub(crate) async fn download(&self, remote: &str, local: &std::path::Path, offset: u64, progress: &std::sync::atomic::AtomicU64) -> Result<(), CoreError> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+        let io = |e: std::io::Error| CoreError::Server { hop: self.hop, message: e.to_string(), detail: None };
+        let mut src = self.sftp.open(remote).await.map_err(|e| sftp_err(self.hop, e))?;
+        if offset > 0 {
+            src.seek(std::io::SeekFrom::Start(offset)).await.map_err(io)?;
+        }
+        let mut dst = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(offset == 0)
+            .open(local)
+            .await
+            .map_err(local_err)?;
+        dst.seek(std::io::SeekFrom::Start(offset)).await.map_err(local_err)?;
+        let mut buf = vec![0u8; COPY_CHUNK];
+        loop {
+            let n = src.read(&mut buf).await.map_err(io)?;
+            if n == 0 {
+                break;
+            }
+            dst.write_all(&buf[..n]).await.map_err(local_err)?;
+            progress.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+        }
+        dst.flush().await.map_err(local_err)
+    }
 }
 
 fn sftp_err(hop: Hop, e: russh_sftp::client::error::Error) -> CoreError {

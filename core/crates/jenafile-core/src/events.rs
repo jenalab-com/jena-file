@@ -4,6 +4,50 @@ use std::fmt;
 
 pub type ConnectionId = u64;
 pub type PromptId = u64;
+pub type TransferId = u64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Upload,
+    Download,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransferState {
+    Queued,
+    Running,
+    Paused,
+    Done,
+    Skipped,
+    Cancelled,
+    Failed { message: String },
+}
+
+/// One file in the transfer queue, as the UI shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferInfo {
+    pub id: TransferId,
+    pub connection: ConnectionId,
+    pub direction: Direction,
+    pub local_path: String,
+    pub remote_path: String,
+    pub size: u64,
+    pub transferred: u64,
+    /// Smoothed, 0 when not running.
+    pub bytes_per_sec: u64,
+    pub state: TransferState,
+}
+
+/// What to do when the destination already exists (기획서 FR-14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictAction {
+    Overwrite,
+    /// Continue a partial file from its current size.
+    Resume,
+    /// Keep both: `name (1).ext`.
+    Rename,
+    Skip,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hop {
@@ -61,6 +105,16 @@ pub enum PromptKind {
     /// The key differs from the recorded one. Possible attack; the UI must warn loudly.
     HostKeyChanged { host: String, port: u16, key: HostKeyInfo },
     Password { user: String, host: String, attempt: u32 },
+    /// The destination exists. `can_resume` when it is smaller than the source.
+    Conflict {
+        direction: Direction,
+        destination: String,
+        source_size: u64,
+        source_modified: Option<u64>,
+        destination_size: u64,
+        destination_modified: Option<u64>,
+        can_resume: bool,
+    },
     /// Server-driven questions (OTP etc.).
     KeyboardInteractive { name: String, instructions: String, prompts: Vec<InteractivePrompt> },
 }
@@ -72,6 +126,8 @@ pub enum PromptAnswer {
     Reject,
     Secret(String),
     Responses(Vec<String>),
+    /// For `Conflict`; `apply_to_all` covers the rest of the same batch.
+    Conflict { action: ConflictAction, apply_to_all: bool },
     Cancel,
 }
 
@@ -80,6 +136,8 @@ pub enum Event {
     StateChanged { connection: ConnectionId, state: ConnectionState },
     Log { connection: ConnectionId, hop: Hop, level: LogLevel, message: String },
     PromptRequested { prompt: PromptId, connection: ConnectionId, hop: Hop, kind: PromptKind },
+    /// Queue changes and progress (progress at most ~10 times a second per item).
+    Transfer(TransferInfo),
 }
 
 /// Implemented by the UI layer. Called from tokio threads.

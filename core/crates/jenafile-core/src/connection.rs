@@ -14,9 +14,10 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::error::CoreError;
-use crate::events::{ConnectionId, ConnectionState, Event, EventSink, Hop, LogLevel, PromptAnswer, PromptId};
+use crate::events::{ConnectionId, ConnectionState, Event, EventSink, Hop, LogLevel, PromptAnswer, PromptId, TransferId};
 use crate::prompt::PromptBroker;
-use crate::transport::{self, HopContext, KnownHosts, RemoteEntry, Session, TerminalInput, TerminalSink, Tunnel};
+use crate::transfer::{self, Transfers};
+use crate::transport::{self, Files, HopContext, KnownHosts, RemoteEntry, Session, TerminalInput, TerminalSink, Tunnel};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint {
@@ -65,6 +66,7 @@ enum Command {
         reply: oneshot::Sender<Result<mpsc::UnboundedSender<TerminalInput>, CoreError>>,
     },
     OpenTunnel { host: String, port: u16, reply: oneshot::Sender<Result<Tunnel, CoreError>> },
+    Files(oneshot::Sender<Result<Files, CoreError>>),
     Close(oneshot::Sender<()>),
 }
 
@@ -92,6 +94,7 @@ struct Inner {
     terminals: Mutex<HashMap<TerminalId, (ConnectionId, mpsc::UnboundedSender<TerminalInput>)>>,
     next_id: AtomicU64,
     max_connections: u32,
+    transfers: Arc<Transfers>,
 }
 
 impl Inner {
@@ -120,9 +123,11 @@ pub struct ConnectionManager {
 impl ConnectionManager {
     pub fn new(config: CoreConfig, sink: Arc<dyn EventSink>) -> Self {
         let known_hosts = KnownHosts::new(config.data_dir.join("known_hosts"), config.user_known_hosts);
+        let prompts = Arc::new(PromptBroker::new(sink.clone()));
         Self {
             inner: Arc::new(Inner {
-                prompts: Arc::new(PromptBroker::new(sink.clone())),
+                transfers: Transfers::new(sink.clone(), prompts.clone()),
+                prompts,
                 sink,
                 known_hosts: Arc::new(known_hosts),
                 slots: Mutex::new(HashMap::new()),
@@ -254,6 +259,48 @@ impl ConnectionManager {
         }
     }
 
+    /// Queues uploads of local files / folders into `remote_dir` (folders are recreated).
+    pub async fn upload(&self, id: ConnectionId, locals: Vec<PathBuf>, remote_dir: String) -> Result<Vec<TransferId>, CoreError> {
+        let files = self.files(id).await?;
+        let jobs = transfer::plan_upload(&files, &locals, &remote_dir).await?;
+        Ok(self.inner.transfers.enqueue(id, files, jobs))
+    }
+
+    /// Queues downloads of remote files / folders into `local_dir`.
+    pub async fn download(&self, id: ConnectionId, remotes: Vec<String>, local_dir: PathBuf) -> Result<Vec<TransferId>, CoreError> {
+        let files = self.files(id).await?;
+        let jobs = transfer::plan_download(&files, &remotes, &local_dir).await?;
+        Ok(self.inner.transfers.enqueue(id, files, jobs))
+    }
+
+    pub fn pause_transfer(&self, id: TransferId) {
+        self.inner.transfers.pause(id)
+    }
+
+    /// Resume / retry from the destination's current size.
+    pub fn resume_transfer(&self, id: TransferId) {
+        self.inner.transfers.resume(id)
+    }
+
+    pub fn cancel_transfer(&self, id: TransferId) {
+        self.inner.transfers.cancel(id)
+    }
+
+    pub fn clear_finished_transfers(&self) {
+        self.inner.transfers.clear_finished()
+    }
+
+    /// True while anything is queued or running (the UI keeps the Mac awake).
+    pub fn transfers_active(&self) -> bool {
+        self.inner.transfers.has_active()
+    }
+
+    async fn files(&self, id: ConnectionId) -> Result<Files, CoreError> {
+        let (reply, rx) = oneshot::channel();
+        self.send(id, Command::Files(reply)).await?;
+        rx.await.map_err(|_| CoreError::NotConnected(id))?
+    }
+
     /// Opens a shell tab on the connection's SSH session (same login as SFTP).
     pub async fn open_terminal(
         &self,
@@ -317,6 +364,7 @@ async fn run_actor(id: ConnectionId, hop: Hop, session: Session, mut rx: mpsc::R
                 Some(Command::OpenTunnel { host, port, reply }) => {
                     let _ = reply.send(session.open_tunnel(&host, port).await);
                 }
+                Some(Command::Files(reply)) => { let _ = reply.send(session.files(hop)); }
                 Some(Command::Close(reply)) => {
                     session.close().await;
                     let _ = reply.send(());
@@ -333,6 +381,7 @@ async fn run_actor(id: ConnectionId, hop: Hop, session: Session, mut rx: mpsc::R
     };
     let parent = inner.slots.lock().unwrap().remove(&id).and_then(|s| s.parent);
     inner.terminals.lock().unwrap().retain(|_, (conn, _)| *conn != id);
+    inner.transfers.connection_closed(id);
     // A bastion opened only for this target has nothing left to carry.
     if let Some(p) = parent {
         let slots = inner.slots.lock().unwrap();

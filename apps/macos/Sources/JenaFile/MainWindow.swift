@@ -5,6 +5,8 @@ import AppKit
 struct MainWindowParts {
     let quickConnect: NSView
     let log: NSView
+    let transfers: NSView
+    let local: NSView
     let remote: NSView
     let terminal: NSView
     let status: NSTextField
@@ -22,8 +24,8 @@ enum MainWindow {
         window.setFrameAutosaveName("MainWindow")
 
         let quickConnect = parts.quickConnect
-        let top = horizontalSplit(boxed(parts.log), placeholder("전송 상태 (M4)"))
-        let middle = horizontalSplit(placeholder("로컬 (M4)"), boxed(parts.remote))
+        let top = horizontalSplit(boxed(parts.log), boxed(parts.transfers))
+        let middle = horizontalSplit(boxed(parts.local), boxed(parts.remote))
         let terminal = boxed(parts.terminal)
 
         let rows = NSSplitView()
@@ -58,10 +60,10 @@ enum MainWindow {
         ])
         window.contentView = content
 
-        // Lay out now at the window's real size, then restore (or default) ratios.
+        // Rows 25/45/30 (transfers need a few lines). Lay out now at the window's real size, then restore (or default) ratios.
         content.layoutSubtreeIfNeeded()
         let keepers = [
-            (rows, SplitRatios(key: "rows", defaults: [0.2, 0.7])),
+            (rows, SplitRatios(key: "rows", defaults: [0.25, 0.7])),
             (top, SplitRatios(key: "top", defaults: [0.5])),
             (middle, SplitRatios(key: "files", defaults: [0.5])),
         ]

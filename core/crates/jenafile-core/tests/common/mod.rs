@@ -17,6 +17,8 @@ pub struct Script {
     /// Hop of each prompt in `asked`, same order.
     pub hops: Mutex<Vec<Hop>>,
     pub events: Mutex<Vec<Event>>,
+    /// Answers for transfer conflicts, in order.
+    pub conflicts: Mutex<Vec<PromptAnswer>>,
 }
 
 impl EventSink for Script {
@@ -32,6 +34,10 @@ impl EventSink for Script {
                     if pw.is_empty() { PromptAnswer::Cancel } else { PromptAnswer::Secret(pw.remove(0)) }
                 }
                 PromptKind::KeyboardInteractive { .. } => PromptAnswer::Cancel,
+                PromptKind::Conflict { .. } => {
+                    let mut c = self.conflicts.lock().unwrap();
+                    if c.is_empty() { PromptAnswer::Cancel } else { c.remove(0) }
+                }
             };
             assert!(self.manager.get().unwrap().respond(prompt, answer));
         }
@@ -46,6 +52,7 @@ pub fn setup(dir: &std::path::Path, host_key: PromptAnswer, passwords: &[&str], 
         asked: Mutex::new(vec![]),
         hops: Mutex::new(vec![]),
         events: Mutex::new(vec![]),
+        conflicts: Mutex::new(vec![]),
     });
     let config = CoreConfig { data_dir: dir.to_path_buf(), user_known_hosts: None, max_connections: max };
     let manager = ConnectionManager::new(config, script.clone());
@@ -97,4 +104,34 @@ impl TermCapture {
         }
         panic!("never saw {needle:?} in {:?}", String::from_utf8_lossy(&self.out.lock().unwrap()));
     }
+}
+
+/// Latest info per transfer, from the event log.
+pub fn transfers(script: &Script) -> std::collections::BTreeMap<TransferId, TransferInfo> {
+    let mut out = std::collections::BTreeMap::new();
+    for e in script.events.lock().unwrap().iter() {
+        if let Event::Transfer(t) = e {
+            out.insert(t.id, t.clone());
+        }
+    }
+    out
+}
+
+/// Waits until every id reached a final state; returns their infos.
+pub async fn settle(script: &Script, ids: &[TransferId]) -> Vec<TransferInfo> {
+    for _ in 0..600 {
+        let all = transfers(script);
+        let done: Vec<_> = ids.iter().filter_map(|id| all.get(id)).filter(|t| !matches!(t.state, TransferState::Queued | TransferState::Running)).cloned().collect();
+        if done.len() == ids.len() {
+            return done;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("transfers did not settle: {:?}", transfers(script));
+}
+
+/// Deterministic pseudo-random bytes (no rand dependency).
+pub fn noise(len: usize, seed: u64) -> Vec<u8> {
+    let mut x = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    (0..len).map(|_| { x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); (x >> 33) as u8 }).collect()
 }

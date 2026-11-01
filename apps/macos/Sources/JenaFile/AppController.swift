@@ -14,7 +14,11 @@ final class AppController: CoreEventHandler {
     private let log = LogPane()
     private let status = NSTextField(labelWithString: "")
     private let remote: RemoteBrowser
+    private let local = LocalBrowser()
+    private let transferList = TransferList()
     private let terminals: TerminalPane
+    /// Keeps the Mac awake while transfers run (기획서 §9 안정성).
+    private var awake: NSObjectProtocol?
     private var prompts: PromptPresenter!
     /// Every connection opened from this window, with a display title.
     private var open: [UInt64: String] = [:]
@@ -28,8 +32,15 @@ final class AppController: CoreEventHandler {
         remote = RemoteBrowser(core: core)
         terminals = TerminalPane(core: core)
         let remotePane = RemotePane(browser: remote)
+        let localPane = LocalPane(browser: local)
         window = MainWindow.make(MainWindowParts(
-            quickConnect: quickConnect, log: log, remote: remotePane, terminal: terminals, status: status))
+            quickConnect: quickConnect, log: log, transfers: TransferPane(list: transferList, core: core),
+            local: localPane, remote: remotePane, terminal: terminals, status: status))
+        localPane.onUpload = { [weak self] paths in self?.upload(paths) }
+        remotePane.onUploadHere = { [weak self] paths in self?.upload(paths) }
+        remotePane.onDownload = { [weak self] paths in self?.download(paths) }
+        localPane.onDownloadHere = { [weak self] paths in self?.download(paths) }
+        transferList.onFinished = { [weak self] t in self?.transferFinished(t) }
         prompts = PromptPresenter(window: window) { [core] id, answer in _ = core.respond(prompt: id, answer: answer) }
         bridge.handler = self
         quickConnect.onSubmit = { [weak self] in self?.submit() }
@@ -116,6 +127,10 @@ final class AppController: CoreEventHandler {
                 refresh()
                 if withSftp {
                     await remote.attach(c.id)
+                    // Dev only: JENAFILE_DEV_UPLOAD=/path/a:/path/b queues uploads after connecting.
+                    if let dev = ProcessInfo.processInfo.environment["JENAFILE_DEV_UPLOAD"] {
+                        upload(dev.split(separator: ":").map(String.init))
+                    }
                 } else {
                     remote.detach()
                     log.append("터미널에서 새 비밀번호로 바꾼 뒤, 끊고 다시 접속해 주세요.")
@@ -145,6 +160,72 @@ final class AppController: CoreEventHandler {
         let ids = Array(open.keys)
         Task {
             for id in ids { await core.disconnect(connection: id) }
+        }
+    }
+
+    // MARK: transfers (M4)
+
+    /// Local files / folders → the folder shown in the remote pane.
+    private func upload(_ localPaths: [String]) {
+        guard let id = active, remote.connection == id, !remote.path.isEmpty else {
+            log.append("업로드하려면 먼저 서버에 접속해 주세요", tone: .warn)
+            return
+        }
+        let target = remote.path
+        Task {
+            do {
+                let ids = try await core.upload(connection: id, localPaths: localPaths, remoteDir: target)
+                log.append("업로드 \(ids.count)개를 대기열에 넣었어요 → \(target)")
+                await remote.refresh()   // folders are created up front
+            } catch {
+                log.append(UserMessage.describe(error), tone: .error)
+            }
+        }
+    }
+
+    /// Remote files / folders → the folder shown in the local pane.
+    private func download(_ remotePaths: [String]) {
+        guard let id = active else { return }
+        let target = local.path
+        Task {
+            do {
+                let ids = try await core.download(connection: id, remotePaths: remotePaths, localDir: target)
+                log.append("다운로드 \(ids.count)개를 대기열에 넣었어요 → \(target)")
+                local.refresh()
+            } catch {
+                log.append(UserMessage.describe(error), tone: .error)
+            }
+        }
+    }
+
+    private var refreshPending = (remote: false, local: false)
+
+    /// Show finished files in whichever pane displays their folder (coalesced).
+    private func transferFinished(_ t: TransferInfo) {
+        if t.direction == .upload, RemotePath.parent(t.remotePath) == remote.path, !refreshPending.remote {
+            refreshPending.remote = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { return }
+                self.refreshPending.remote = false
+                Task { await self.remote.refresh() }
+            }
+        }
+        if t.direction == .download, (t.localPath as NSString).deletingLastPathComponent == local.path, !refreshPending.local {
+            refreshPending.local = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.refreshPending.local = false
+                self?.local.refresh()
+            }
+        }
+    }
+
+    private func updateAwake() {
+        if transferList.hasActive, awake == nil {
+            awake = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated],
+                                                          reason: "jena-file 파일 전송 중")
+        } else if !transferList.hasActive, let a = awake {
+            ProcessInfo.processInfo.endActivity(a)
+            awake = nil
         }
     }
 
@@ -208,6 +289,12 @@ final class AppController: CoreEventHandler {
             if level == .warn { log.append(message, tone: .warn) }
         case .promptRequested(let prompt, _, let hop, let kind):
             prompts.present(prompt: prompt, hop: hop, kind: kind)
+        case .transfer(let info):
+            transferList.update(info)
+            updateAwake()
+            if case .failed(let m) = info.state {
+                log.append("전송 실패: \((info.remotePath as NSString).lastPathComponent) — \(m)", tone: .error)
+            }
         case .stateChanged(let id, let state):
             switch state {
             case .connecting(let step):

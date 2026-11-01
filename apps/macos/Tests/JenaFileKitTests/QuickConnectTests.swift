@@ -91,3 +91,36 @@ final class QuickConnectFillTests: XCTestCase {
         XCTAssertEqual(fill.bastion, "jump@b.example:2200")
     }
 }
+
+final class TransferFormatTests: XCTestCase {
+    func testEtaAndSpeed() {
+        XCTAssertEqual(Format.eta(remaining: 100 << 20, bytesPerSec: 10 << 20), "0:10")
+        XCTAssertEqual(Format.eta(remaining: 10 << 30, bytesPerSec: 1 << 20), "2:50:40")
+        XCTAssertEqual(Format.eta(remaining: 5, bytesPerSec: 0), "")
+        XCTAssertEqual(Format.speed(0), "")
+        XCTAssertTrue(Format.speed(12_500_000).hasSuffix("/s"))
+    }
+}
+
+@MainActor
+final class LocalBrowserTests: XCTestCase {
+    func testListsFoldersFirstAndNavigates() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("zeta"), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: root.appendingPathComponent("a.txt"))
+        try Data("h".utf8).write(to: root.appendingPathComponent(".hidden"))
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let b = LocalBrowser(path: root.path)
+        b.refresh()
+        XCTAssertEqual(b.entries.map(\.name), ["zeta", "a.txt"], "dot-files hidden by default")
+        b.showsHidden = true
+        XCTAssertEqual(b.entries.map(\.name), ["zeta", ".hidden", "a.txt"])
+        b.showsHidden = false
+        XCTAssertEqual(b.entries[1].size, 1)
+        b.enter(b.entries[0])
+        XCTAssertTrue(b.path.hasSuffix("/zeta"))
+        b.goUp()
+        XCTAssertEqual(b.path, root.standardizedFileURL.path)
+    }
+}

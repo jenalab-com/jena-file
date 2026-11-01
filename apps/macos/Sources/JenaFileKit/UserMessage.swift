@@ -14,6 +14,7 @@ public enum UserMessage {
             return "\(where_(hop)) 오류: \(message)" + (detail.map { "\n서버 메시지: \($0)" } ?? "")
         case .TunnelFailed(let host, let port, let message):
             return "bastion까지는 연결됐지만 \(host):\(port)에 닿지 못했어요 (\(message))"
+        case .Local(let message): return "이 Mac에서 문제가 생겼어요: \(message)"
         case .Cancelled: return "접속을 취소했어요."
         case .NotConnected: return "연결이 끊겨 있어요."
         case .LimitReached(let max): return "최대 \(max)개까지 연결할 수 있어요. 하나를 끊고 다시 시도해 주세요."

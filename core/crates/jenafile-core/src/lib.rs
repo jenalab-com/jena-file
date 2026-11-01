@@ -6,13 +6,14 @@ mod error;
 mod events;
 mod prompt;
 mod ssh_command;
+mod transfer;
 mod transport;
 
 pub use connection::{Connected, ConnectionManager, CoreConfig, Endpoint, TerminalId, Via};
 pub use error::CoreError;
 pub use events::{
-    ConnectStep, ConnectionId, ConnectionState, Event, EventSink, HostKeyInfo, Hop, InteractivePrompt,
-    LogLevel, PromptAnswer, PromptId, PromptKind,
+    ConflictAction, ConnectStep, ConnectionId, ConnectionState, Direction, Event, EventSink, HostKeyInfo, Hop,
+    InteractivePrompt, LogLevel, PromptAnswer, PromptId, PromptKind, TransferId, TransferInfo, TransferState,
 };
 pub use ssh_command::{HostSpec, ParsedSsh, parse_ssh_command};
 pub use transport::{RemoteEntry, TerminalSink};

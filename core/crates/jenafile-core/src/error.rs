@@ -20,6 +20,9 @@ pub enum CoreError {
     /// The bastion is fine but could not reach the next host (AC-4).
     #[error("bastion could not reach {host}:{port}: {message}")]
     TunnelFailed { host: String, port: u16, message: String },
+    /// A problem on this Mac's side (local file not readable, disk full…).
+    #[error("local: {message}")]
+    Local { message: String },
     #[error("cancelled")]
     Cancelled,
     #[error("connection {0} is not open")]
