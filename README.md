@@ -15,6 +15,7 @@ bastion 뒤 서버에 파일을 올리려면 지금은 터미널에서 `ssh -L`�
 | 문서 | 내용 |
 |---|---|
 | [docs/기획서.md](docs/기획서.md) | 기획서(범위·화면·기능 요구사항·수용 기준·결정 기록) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 기술 구조 설계(모듈·연결 모델·동시성·저장·MVP 작업 순서) |
 | [docs/spike/2026-11-01-russh.md](docs/spike/2026-11-01-russh.md) | russh 검증 — 직접/경유 SFTP, 인증, 처리량 |
 | [docs/spike/2026-11-01-uniffi.md](docs/spike/2026-11-01-uniffi.md) | Swift ↔ Rust(UniFFI) 연결, SwiftTerm 한글 입력 |
 
