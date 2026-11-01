@@ -1,6 +1,6 @@
 # Test-only SSH server (bastion + internal server). Never expose beyond 127.0.0.1.
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-server iproute2 \
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-server openssh-sftp-server iproute2 \
     && rm -rf /var/lib/apt/lists/* && mkdir -p /run/sshd \
     && rm -f /etc/ssh/ssh_host_*    # host keys are generated per container at start
 RUN useradd -m -s /bin/bash jena && echo 'jena:jena-test' | chpasswd

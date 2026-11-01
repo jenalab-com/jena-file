@@ -7,3 +7,16 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+log = "0.4"
+russh = "0.65.0"
+russh-sftp = "3.0.1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time", "net", "fs"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# Integration tests against tests/docker (bastion 127.0.0.1:2201). Run with:
+#   docker compose -f tests/docker/compose.yml up -d && cargo test --features docker-tests
+docker-tests = []

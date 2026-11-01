@@ -17,4 +17,5 @@ path = "src/bin/uniffi-bindgen-swift.rs"
 
 [dependencies]
 jenafile-core = { path = "../jenafile-core" }
+thiserror = "2"
 uniffi = { version = "0.32.2", features = ["tokio", "cli"] }

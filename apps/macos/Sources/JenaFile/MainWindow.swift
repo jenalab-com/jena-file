@@ -1,12 +1,18 @@
 import AppKit
-import JenaFileKit
 
-/// Layout skeleton from 기획서 §7.1: quick-connect bar, then
-/// status log | transfers, local | remote, terminal. Panes are placeholders until M1+.
+/// Layout from 기획서 §7.1: quick-connect bar, then
+/// status log | transfers, local | remote, terminal.
+struct MainWindowParts {
+    let quickConnect: NSView
+    let log: NSView
+    let remote: NSView
+    let status: NSTextField
+}
+
 enum MainWindow {
     @MainActor
-    static func make() -> NSWindow {
-        let window = NSWindow(
+    static func make(_ parts: MainWindowParts) -> NSWindow {
+        let window = MainNSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
@@ -14,18 +20,17 @@ enum MainWindow {
         window.minSize = NSSize(width: 800, height: 560)
         window.setFrameAutosaveName("MainWindow")
 
-        let quickConnect = placeholder("빠른 접속", height: 36)
-        let top = horizontalSplit(placeholder("상태 로그"), placeholder("전송 상태"), autosave: "TopPanes")
-        let middle = horizontalSplit(placeholder("로컬"), placeholder("원격"), autosave: "FilePanes")
-        let terminal = placeholder("터미널")
+        let quickConnect = parts.quickConnect
+        let top = horizontalSplit(boxed(parts.log), placeholder("전송 상태 (M4)"))
+        let middle = horizontalSplit(placeholder("로컬 (M4)"), boxed(parts.remote))
+        let terminal = placeholder("터미널 (M2)")
 
         let rows = NSSplitView()
         rows.isVertical = false
         rows.dividerStyle = .thin
-        rows.autosaveName = "MainRows"
         [top, middle, terminal].forEach(rows.addArrangedSubview)
 
-        let status = NSTextField(labelWithString: "core \(CoreInfo.version)")
+        let status = parts.status
         status.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         status.textColor = .secondaryLabelColor
 
@@ -52,36 +57,48 @@ enum MainWindow {
         ])
         window.contentView = content
 
-        // First launch only: rows 20/50/30, each pair split in half.
-        // Later launches restore what the user dragged (autosaveName).
-        DispatchQueue.main.async {
-            if !hasSavedFrames(rows) {
-                let h = rows.bounds.height
-                rows.setPosition(h * 0.2, ofDividerAt: 0)
-                rows.setPosition(h * 0.7, ofDividerAt: 1)
-            }
-            for pair in [top, middle] where !hasSavedFrames(pair) {
-                pair.setPosition(pair.bounds.width * 0.5, ofDividerAt: 0)
-            }
-        }
+        // Lay out now at the window's real size, then restore (or default) ratios.
+        content.layoutSubtreeIfNeeded()
+        let keepers = [
+            (rows, SplitRatios(key: "rows", defaults: [0.2, 0.7])),
+            (top, SplitRatios(key: "top", defaults: [0.5])),
+            (middle, SplitRatios(key: "files", defaults: [0.5])),
+        ]
+        for (split, keeper) in keepers { keeper.apply(to: split) }
+        window.splitKeepers = keepers.map(\.1)
         return window
     }
 
     @MainActor
-    private static func hasSavedFrames(_ split: NSSplitView) -> Bool {
-        guard let name = split.autosaveName else { return false }
-        return UserDefaults.standard.object(forKey: "NSSplitView Subview Frames \(name)") != nil
-    }
-
-    @MainActor
-    private static func horizontalSplit(_ left: NSView, _ right: NSView, autosave: String) -> NSSplitView {
+    private static func horizontalSplit(_ left: NSView, _ right: NSView) -> NSSplitView {
         let split = NSSplitView()
         split.isVertical = true
         split.dividerStyle = .thin
-        split.autosaveName = autosave
         split.addArrangedSubview(left)
         split.addArrangedSubview(right)
         return split
+    }
+
+    @MainActor
+    private static func boxed(_ content: NSView) -> NSView {
+        let box = NSBox()
+        box.boxType = .custom
+        box.borderColor = .separatorColor
+        box.fillColor = .controlBackgroundColor
+        box.cornerRadius = 4
+        box.titlePosition = .noTitle
+        box.contentViewMargins = .zero
+        content.translatesAutoresizingMaskIntoConstraints = false
+        box.contentView?.addSubview(content)
+        if let c = box.contentView {
+            NSLayoutConstraint.activate([
+                content.topAnchor.constraint(equalTo: c.topAnchor),
+                content.bottomAnchor.constraint(equalTo: c.bottomAnchor),
+                content.leadingAnchor.constraint(equalTo: c.leadingAnchor),
+                content.trailingAnchor.constraint(equalTo: c.trailingAnchor),
+            ])
+        }
+        return box
     }
 
     @MainActor
