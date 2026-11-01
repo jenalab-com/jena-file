@@ -20,6 +20,49 @@ pub struct Endpoint {
     pub user: String,
 }
 
+/// How to reach a target.
+#[derive(uniffi::Enum)]
+pub enum Via {
+    /// Use an open connection as the bastion (no re-authentication).
+    Connection { id: u64 },
+    /// Open a bastion just for this target; it closes with the target.
+    Endpoint { endpoint: Endpoint },
+}
+
+#[derive(uniffi::Record)]
+pub struct Connected {
+    pub id: u64,
+    /// Set when a bastion was opened for this target.
+    pub bastion: Option<u64>,
+}
+
+#[derive(uniffi::Record)]
+pub struct HostSpec {
+    pub user: Option<String>,
+    pub host: String,
+    pub port: u16,
+}
+
+/// A pasted `ssh ...` command (기획서 FR-09).
+#[derive(uniffi::Record)]
+pub struct ParsedSsh {
+    pub target: Option<HostSpec>,
+    pub bastion: Option<HostSpec>,
+    pub dropped_local_port: Option<u16>,
+    pub ignored: Vec<String>,
+}
+
+#[uniffi::export]
+pub fn parse_ssh_command(text: String) -> Option<ParsedSsh> {
+    let h = |h: jc::HostSpec| HostSpec { user: h.user, host: h.host, port: h.port };
+    jc::parse_ssh_command(&text).map(|p| ParsedSsh {
+        target: p.target.map(h),
+        bastion: p.bastion.map(h),
+        dropped_local_port: p.dropped_local_port,
+        ignored: p.ignored,
+    })
+}
+
 #[derive(uniffi::Record)]
 pub struct RemoteEntry {
     pub name: String,
@@ -108,6 +151,8 @@ pub enum CoreError {
     PasswordExpired { hop: Hop },
     #[error("{message}")]
     Server { hop: Hop, message: String, detail: Option<String> },
+    #[error("bastion could not reach {host}:{port}")]
+    TunnelFailed { host: String, port: u16, message: String },
     #[error("cancelled")]
     Cancelled,
     #[error("not connected")]
@@ -165,9 +210,14 @@ impl Core {
         Arc::new(Self { manager: jc::ConnectionManager::new(config, Arc::new(Sink(listener))) })
     }
 
-    pub async fn connect(&self, endpoint: Endpoint) -> Result<u64, CoreError> {
-        let ep = jc::Endpoint { host: endpoint.host, port: endpoint.port, user: endpoint.user };
-        Ok(self.manager.connect(ep).await?)
+    /// `with_sftp = false`: terminal only (e.g. to change an expired password).
+    pub async fn connect(&self, endpoint: Endpoint, via: Option<Via>, with_sftp: bool) -> Result<Connected, CoreError> {
+        let via = via.map(|v| match v {
+            Via::Connection { id } => jc::Via::Connection(id),
+            Via::Endpoint { endpoint } => jc::Via::Endpoint(endpoint.into()),
+        });
+        let c = self.manager.connect(endpoint.into(), via, with_sftp).await?;
+        Ok(Connected { id: c.id, bastion: c.bastion })
     }
 
     pub async fn home(&self, connection: u64) -> Result<String, CoreError> {
@@ -225,6 +275,12 @@ impl jc::EventSink for Sink {
 
 // ---- conversions -------------------------------------------------------------
 
+impl From<Endpoint> for jc::Endpoint {
+    fn from(e: Endpoint) -> Self {
+        jc::Endpoint { host: e.host, port: e.port, user: e.user }
+    }
+}
+
 impl From<jc::Hop> for Hop {
     fn from(h: jc::Hop) -> Self {
         match h { jc::Hop::Bastion => Hop::Bastion, jc::Hop::Target => Hop::Target }
@@ -251,6 +307,7 @@ impl From<jc::CoreError> for CoreError {
             E::HostKeyChanged { hop } => CoreError::HostKeyChanged { hop: hop.into() },
             E::PasswordExpired { hop } => CoreError::PasswordExpired { hop: hop.into() },
             E::Server { hop, message, detail } => CoreError::Server { hop: hop.into(), message, detail },
+            E::TunnelFailed { host, port, message } => CoreError::TunnelFailed { host, port, message },
             E::Cancelled => CoreError::Cancelled,
             E::NotConnected(connection) => CoreError::NotConnected { connection },
             E::LimitReached { max } => CoreError::LimitReached { max },

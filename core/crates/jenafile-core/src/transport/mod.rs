@@ -89,8 +89,12 @@ impl client::Handler for Handler {
 
 pub(crate) struct Session {
     handle: Handle<Handler>,
-    sftp: SftpSession,
+    /// None for terminal-only sessions (bastions, password change).
+    sftp: Option<SftpSession>,
 }
+
+/// A direct-tcpip channel through a bastion, ready to carry the next SSH session.
+pub(crate) struct Tunnel(russh::ChannelStream<client::Msg>);
 
 fn client_config() -> Arc<client::Config> {
     Arc::new(client::Config { window_size: CHANNEL_WINDOW, ..Default::default() })
@@ -105,22 +109,52 @@ fn sftp_config() -> russh_sftp::client::Config {
     }
 }
 
-/// Dial, verify host key, authenticate, open SFTP. `on_step` reports progress.
+/// Dial, verify host key, authenticate, optionally open SFTP.
 pub(crate) async fn connect_direct(
     ctx: HopContext,
+    with_sftp: bool,
     mut on_step: impl FnMut(crate::events::ConnectStep),
 ) -> Result<Session, CoreError> {
-    use crate::events::ConnectStep;
-    on_step(ConnectStep::Dialing);
+    on_step(crate::events::ConnectStep::Dialing);
     let refusal = Arc::new(Mutex::new(None));
     let handler = Handler { ctx: ctx.clone(), refusal: refusal.clone() };
-    let mut handle = client::connect(client_config(), (ctx.host.as_str(), ctx.port), handler)
+    let handle = client::connect(client_config(), (ctx.host.as_str(), ctx.port), handler)
         .await
         .map_err(|e| refusal.lock().unwrap().take().unwrap_or(CoreError::Connect { hop: ctx.hop, message: e.to_string() }))?;
-    on_step(ConnectStep::Auth);
-    authenticate(&mut handle, &ctx).await?;
-    on_step(ConnectStep::Sftp);
-    let sftp = open_sftp(&handle, ctx.hop).await?;
+    finish(handle, &ctx, with_sftp, on_step).await
+}
+
+/// Same as [`connect_direct`] but over a bastion tunnel (`ssh -J`). End-to-end
+/// encrypted: the bastion only relays bytes and never sees these credentials.
+pub(crate) async fn connect_via(
+    ctx: HopContext,
+    tunnel: Tunnel,
+    with_sftp: bool,
+    mut on_step: impl FnMut(crate::events::ConnectStep),
+) -> Result<Session, CoreError> {
+    on_step(crate::events::ConnectStep::Dialing);
+    let refusal = Arc::new(Mutex::new(None));
+    let handler = Handler { ctx: ctx.clone(), refusal: refusal.clone() };
+    let handle = client::connect_stream(client_config(), tunnel.0, handler)
+        .await
+        .map_err(|e| refusal.lock().unwrap().take().unwrap_or(CoreError::Connect { hop: ctx.hop, message: e.to_string() }))?;
+    finish(handle, &ctx, with_sftp, on_step).await
+}
+
+async fn finish(
+    mut handle: Handle<Handler>,
+    ctx: &HopContext,
+    with_sftp: bool,
+    mut on_step: impl FnMut(crate::events::ConnectStep),
+) -> Result<Session, CoreError> {
+    on_step(crate::events::ConnectStep::Auth);
+    authenticate(&mut handle, ctx).await?;
+    let sftp = if with_sftp {
+        on_step(crate::events::ConnectStep::Sftp);
+        Some(open_sftp(&handle, ctx.hop).await?)
+    } else {
+        None
+    };
     Ok(Session { handle, sftp })
 }
 
@@ -225,12 +259,26 @@ pub(crate) fn classify_sftp_failure(hop: Hop, error: &str, server_said: Option<S
 }
 
 impl Session {
+    fn sftp(&self, hop: Hop) -> Result<&SftpSession, CoreError> {
+        self.sftp.as_ref().ok_or(CoreError::Server { hop, message: "this connection has no SFTP".into(), detail: None })
+    }
+
+    /// Ask the bastion to open a channel to host:port (what `ssh -L` / `-J` do).
+    pub(crate) async fn open_tunnel(&self, host: &str, port: u16) -> Result<Tunnel, CoreError> {
+        let ch = self
+            .handle
+            .channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0)
+            .await
+            .map_err(|e| CoreError::TunnelFailed { host: host.into(), port, message: e.to_string() })?;
+        Ok(Tunnel(ch.into_stream()))
+    }
+
     pub(crate) async fn home(&self, hop: Hop) -> Result<String, CoreError> {
-        self.sftp.canonicalize(".").await.map_err(|e| sftp_err(hop, e))
+        self.sftp(hop)?.canonicalize(".").await.map_err(|e| sftp_err(hop, e))
     }
 
     pub(crate) async fn list(&self, hop: Hop, path: &str) -> Result<Vec<RemoteEntry>, CoreError> {
-        let dir = self.sftp.read_dir(path).await.map_err(|e| sftp_err(hop, e))?;
+        let dir = self.sftp(hop)?.read_dir(path).await.map_err(|e| sftp_err(hop, e))?;
         let mut entries: Vec<RemoteEntry> = dir
             .filter(|e| e.file_name() != "." && e.file_name() != "..")
             .map(|e| {
@@ -250,7 +298,9 @@ impl Session {
     }
 
     pub(crate) async fn close(&self) {
-        let _ = self.sftp.close().await;
+        if let Some(sftp) = &self.sftp {
+            let _ = sftp.close().await;
+        }
         let _ = self.handle.disconnect(russh::Disconnect::ByApplication, "", "en").await;
     }
 

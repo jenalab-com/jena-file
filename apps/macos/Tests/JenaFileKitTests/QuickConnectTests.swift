@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import JenaFileKit
+import JenaFileCore
 
 final class QuickConnectTests: XCTestCase {
     func testPlainFields() {
@@ -67,5 +68,26 @@ final class DropPathsTests: XCTestCase {
         let pb = board()
         pb.writeObjects([URL(fileURLWithPath: "/tmp/a b.txt") as NSURL])
         XCTAssertEqual(DropPaths.read(pb), ["/tmp/a b.txt"])
+    }
+}
+
+final class QuickConnectFillTests: XCTestCase {
+    /// The author's `ssh -L` habit (example addresses).
+    func testLocalForwardCommandFillsBastionAndTarget() throws {
+        let parsed = try XCTUnwrap(parseSshCommand(text: "ssh -L 2222:10.0.2.6:22 ops@203.0.113.10"))
+        let fill = try XCTUnwrap(QuickConnectFill(parsed))
+        XCTAssertEqual(fill.host, "10.0.2.6")
+        XCTAssertEqual(fill.user, "")
+        XCTAssertEqual(fill.port, "")
+        XCTAssertEqual(fill.bastion, "ops@203.0.113.10")
+        XCTAssertTrue(fill.note.contains("로컬 포트 2222"))
+        XCTAssertTrue(fill.note.contains("사용자 이름을 입력"))
+    }
+
+    func testJumpCommandWithUsers() throws {
+        let parsed = try XCTUnwrap(parseSshCommand(text: "ssh -J jump@b.example:2200 app@10.0.0.5"))
+        let fill = try XCTUnwrap(QuickConnectFill(parsed))
+        XCTAssertEqual(fill.user, "app")
+        XCTAssertEqual(fill.bastion, "jump@b.example:2200")
     }
 }

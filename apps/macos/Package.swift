@@ -15,6 +15,6 @@ let package = Package(
         .target(name: "JenaFileCore", dependencies: ["jenafile_ffiFFI"], path: "Sources/JenaFileCore"),
         .target(name: "JenaFileKit", dependencies: ["JenaFileCore"], path: "Sources/JenaFileKit"),
         .executableTarget(name: "JenaFile", dependencies: ["JenaFileKit", "SwiftTerm"], path: "Sources/JenaFile"),
-        .testTarget(name: "JenaFileKitTests", dependencies: ["JenaFileKit"], path: "Tests/JenaFileKitTests"),
+        .testTarget(name: "JenaFileKitTests", dependencies: ["JenaFileKit", "JenaFileCore"], path: "Tests/JenaFileKitTests"),
     ]
 )

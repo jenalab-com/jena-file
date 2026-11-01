@@ -28,5 +28,40 @@ public struct QuickConnectInput: Equatable {
     }
 
     public var endpoint: Endpoint { Endpoint(host: host, port: port, user: user) }
-    public var display: String { port == 22 ? "\(user)@\(host)" : "\(user)@\(host):\(port)" }
+
+    /// `user@host[:port]` as typed in the bar's host field.
+    public var field: String { port == 22 ? "\(user)@\(host)" : "\(user)@\(host):\(port)" }
+    public var display: String { field }
+}
+
+/// What to put in the quick-connect bar for a pasted `ssh` command (FR-09).
+public struct QuickConnectFill: Equatable {
+    public var host: String
+    public var user: String
+    public var port: String
+    /// `user@host[:port]` of the bastion, if the command went through one.
+    public var bastion: String?
+    /// Human-readable summary for the status log.
+    public var note: String
+
+    public init?(_ parsed: ParsedSsh) {
+        guard let t = parsed.target else { return nil }
+        host = t.host
+        user = t.user ?? ""
+        port = t.port == 22 ? "" : String(t.port)
+        bastion = parsed.bastion.map { b in
+            let h = b.port == 22 ? b.host : "\(b.host):\(b.port)"
+            return b.user.map { "\($0)@\(h)" } ?? h
+        }
+        var parts: [String] = []
+        if let bastion { parts.append("bastion \(bastion) 경유") }
+        parts.append("서버 \(t.host):\(t.port)")
+        if let p = parsed.droppedLocalPort { parts.append("로컬 포트 \(p)는 이제 필요 없어요") }
+        if t.user == nil { parts.append("서버 사용자 이름을 입력해 주세요") }
+        note = "명령을 해석했어요: " + parts.joined(separator: " · ")
+    }
+
+    public init(host: String, user: String, port: String, bastion: String?, note: String) {
+        self.host = host; self.user = user; self.port = port; self.bastion = bastion; self.note = note
+    }
 }

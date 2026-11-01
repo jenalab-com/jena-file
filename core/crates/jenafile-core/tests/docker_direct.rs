@@ -3,60 +3,17 @@
 //!   cargo test -p jenafile-core --features docker-tests
 #![cfg(feature = "docker-tests")]
 
-use std::sync::{Arc, Mutex, OnceLock};
 
 use jenafile_core::*;
 
-const HOST: &str = "127.0.0.1";
-const PORT: u16 = 2201;
-
-/// Answers prompts like a scripted user and records what was asked.
-struct Script {
-    manager: OnceLock<ConnectionManager>,
-    host_key: PromptAnswer,
-    passwords: Mutex<Vec<String>>,
-    asked: Mutex<Vec<PromptKind>>,
-}
-
-impl EventSink for Script {
-    fn emit(&self, event: Event) {
-        if let Event::PromptRequested { prompt, kind, .. } = event {
-            self.asked.lock().unwrap().push(kind.clone());
-            let answer = match kind {
-                PromptKind::HostKeyUnknown { .. } | PromptKind::HostKeyChanged { .. } => self.host_key.clone(),
-                PromptKind::Password { .. } => {
-                    let mut pw = self.passwords.lock().unwrap();
-                    if pw.is_empty() { PromptAnswer::Cancel } else { PromptAnswer::Secret(pw.remove(0)) }
-                }
-                PromptKind::KeyboardInteractive { .. } => PromptAnswer::Cancel,
-            };
-            assert!(self.manager.get().unwrap().respond(prompt, answer));
-        }
-    }
-}
-
-fn setup(dir: &std::path::Path, host_key: PromptAnswer, passwords: &[&str], max: u32) -> (ConnectionManager, Arc<Script>) {
-    let script = Arc::new(Script {
-        manager: OnceLock::new(),
-        host_key,
-        passwords: Mutex::new(passwords.iter().map(|s| s.to_string()).collect()),
-        asked: Mutex::new(vec![]),
-    });
-    let config = CoreConfig { data_dir: dir.to_path_buf(), user_known_hosts: None, max_connections: max };
-    let manager = ConnectionManager::new(config, script.clone());
-    let _ = script.manager.set(manager.clone());
-    (manager, script)
-}
-
-fn endpoint() -> Endpoint {
-    Endpoint { host: HOST.into(), port: PORT, user: "jena".into() }
-}
+mod common;
+use common::*;
 
 #[tokio::test]
 async fn connect_list_and_remember_host_key() {
     let dir = tempfile::tempdir().unwrap();
     let (m, script) = setup(dir.path(), PromptAnswer::Accept, &["jena-test"], 3);
-    let id = m.connect(endpoint()).await.unwrap();
+    let id = m.connect(endpoint(), None, true).await.unwrap().id;
     let home = m.home(id).await.unwrap();
     assert_eq!(home, "/home/jena");
     let names: Vec<String> = m.list(id, home).await.unwrap().into_iter().map(|e| e.name).collect();
@@ -71,7 +28,7 @@ async fn connect_list_and_remember_host_key() {
     // Second time: key is remembered, only the password is asked.
     script.asked.lock().unwrap().clear();
     script.passwords.lock().unwrap().push("jena-test".into());
-    let id = m.connect(endpoint()).await.unwrap();
+    let id = m.connect(endpoint(), None, true).await.unwrap().id;
     let asked = script.asked.lock().unwrap().clone();
     assert!(matches!(asked.as_slice(), [PromptKind::Password { .. }]), "{asked:?}");
     m.disconnect(id).await;
@@ -81,7 +38,7 @@ async fn connect_list_and_remember_host_key() {
 async fn wrong_password_three_times_is_auth_error() {
     let dir = tempfile::tempdir().unwrap();
     let (m, script) = setup(dir.path(), PromptAnswer::Accept, &["a", "b", "c"], 3);
-    assert_eq!(m.connect(endpoint()).await, Err(CoreError::Auth { hop: Hop::Target }));
+    assert_eq!(m.connect(endpoint(), None, true).await, Err(CoreError::Auth { hop: Hop::Target }));
     let attempts: Vec<u32> = script.asked.lock().unwrap().iter()
         .filter_map(|k| if let PromptKind::Password { attempt, .. } = k { Some(*attempt) } else { None })
         .collect();
@@ -92,7 +49,7 @@ async fn wrong_password_three_times_is_auth_error() {
 async fn rejected_host_key_stops_before_auth() {
     let dir = tempfile::tempdir().unwrap();
     let (m, script) = setup(dir.path(), PromptAnswer::Reject, &["jena-test"], 3);
-    assert_eq!(m.connect(endpoint()).await, Err(CoreError::HostKeyRejected { hop: Hop::Target }));
+    assert_eq!(m.connect(endpoint(), None, true).await, Err(CoreError::HostKeyRejected { hop: Hop::Target }));
     assert!(!script.asked.lock().unwrap().iter().any(|k| matches!(k, PromptKind::Password { .. })), "no password sent");
     assert!(!dir.path().join("known_hosts").exists(), "nothing remembered");
 }
@@ -108,11 +65,11 @@ async fn changed_host_key_is_flagged_and_can_be_refused_or_accepted() {
     .unwrap();
 
     let (m, script) = setup(dir.path(), PromptAnswer::Reject, &["jena-test"], 3);
-    assert_eq!(m.connect(endpoint()).await, Err(CoreError::HostKeyChanged { hop: Hop::Target }));
+    assert_eq!(m.connect(endpoint(), None, true).await, Err(CoreError::HostKeyChanged { hop: Hop::Target }));
     assert!(matches!(script.asked.lock().unwrap()[0], PromptKind::HostKeyChanged { .. }));
 
     let (m, _) = setup(dir.path(), PromptAnswer::Accept, &["jena-test"], 3);
-    let id = m.connect(endpoint()).await.unwrap();
+    let id = m.connect(endpoint(), None, true).await.unwrap().id;
     m.disconnect(id).await;
     let recorded = std::fs::read_to_string(dir.path().join("known_hosts")).unwrap();
     assert_eq!(recorded.lines().count(), 1, "old entry replaced: {recorded}");
@@ -123,48 +80,20 @@ async fn changed_host_key_is_flagged_and_can_be_refused_or_accepted() {
 async fn connection_limit_and_unreachable_host() {
     let dir = tempfile::tempdir().unwrap();
     let (m, _) = setup(dir.path(), PromptAnswer::Accept, &["jena-test", "jena-test"], 1);
-    let id = m.connect(endpoint()).await.unwrap();
-    assert_eq!(m.connect(endpoint()).await, Err(CoreError::LimitReached { max: 1 }));
+    let id = m.connect(endpoint(), None, true).await.unwrap().id;
+    assert_eq!(m.connect(endpoint(), None, true).await, Err(CoreError::LimitReached { max: 1 }));
     m.disconnect(id).await;
 
     let bad = Endpoint { port: 2299, ..endpoint() };
-    assert!(matches!(m.connect(bad).await, Err(CoreError::Connect { hop: Hop::Target, .. })));
-}
-
-/// Collects terminal output for assertions.
-struct TermCapture {
-    out: Mutex<Vec<u8>>,
-    closed: Mutex<Option<Option<u32>>>,
-}
-
-impl TerminalSink for TermCapture {
-    fn on_output(&self, data: Vec<u8>) {
-        self.out.lock().unwrap().extend(data);
-    }
-    fn on_closed(&self, exit_status: Option<u32>) {
-        *self.closed.lock().unwrap() = Some(exit_status);
-    }
-}
-
-impl TermCapture {
-    async fn wait_for(&self, needle: &str) -> String {
-        for _ in 0..100 {
-            let text = String::from_utf8_lossy(&self.out.lock().unwrap()).to_string();
-            if text.contains(needle) {
-                return text;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        panic!("never saw {needle:?} in {:?}", String::from_utf8_lossy(&self.out.lock().unwrap()));
-    }
+    assert!(matches!(m.connect(bad, None, true).await, Err(CoreError::Connect { hop: Hop::Target, .. })));
 }
 
 #[tokio::test]
 async fn terminal_on_same_session_as_sftp() {
     let dir = tempfile::tempdir().unwrap();
     let (m, _) = setup(dir.path(), PromptAnswer::Accept, &["jena-test"], 3);
-    let id = m.connect(endpoint()).await.unwrap();
-    let sink = Arc::new(TermCapture { out: Mutex::new(vec![]), closed: Mutex::new(None) });
+    let id = m.connect(endpoint(), None, true).await.unwrap().id;
+    let sink = TermCapture::new();
     let term = m.open_terminal(id, 100, 30, Some("/etc".into()), Some("ko_KR.UTF-8".into()), sink.clone()).await.unwrap();
 
     // Started in the requested folder, PTY has the requested size.

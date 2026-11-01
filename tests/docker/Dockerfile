@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssh-server 
 # Like typical servers: UTF-8 locales exist, and sshd accepts LANG (Debian default AcceptEnv).
 RUN sed -i -e 's/^# *ko_KR.UTF-8/ko_KR.UTF-8/' -e 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen >/dev/null
 RUN useradd -m -s /bin/bash jena && echo 'jena:jena-test' | chpasswd
+# Password must be changed at next login (기획서 FR-03b): SFTP fails, a PTY shell asks for a new one.
+RUN useradd -m -s /bin/bash expired && echo 'expired:old-pass-1' | chpasswd && chage -d 0 expired
 RUN printf '%s\n' \
     'PasswordAuthentication yes' \
     'KbdInteractiveAuthentication yes' \

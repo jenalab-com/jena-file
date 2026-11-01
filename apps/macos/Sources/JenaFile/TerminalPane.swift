@@ -3,33 +3,42 @@ import JenaFileCore
 import JenaFileKit
 import SwiftTerm
 
-/// Bottom terminal area: one tab per shell on the connected server's SSH session
-/// (FR-30). Dropping a path (or a remote file row) types it, shell-quoted (FR-33).
+/// Bottom terminal area: tabs of shells, each on some connection's SSH session
+/// (FR-30) — a bastion and the servers behind it can sit side by side.
+/// Dropping a path (or a remote file row) types it, shell-quoted (FR-33).
 @MainActor
 final class TerminalPane: NSView {
     private let core: Core
     private let tabs = NSTabView()
     private let header = NSTextField(labelWithString: "")
     private let newTab = NSButton(title: "새 셸", target: nil, action: nil)
+    private let openInternal = NSButton(title: "내부 서버 열기…", target: nil, action: nil)
     private let empty = NSTextField(labelWithString: "서버에 접속하면 여기서 셸을 쓸 수 있어요")
-    private var connection: UInt64?
-    private var title = ""
-    private var sessions: [TerminalSession] = []
-    private var counter = 0
+    /// Open connections and their tab titles. `active` gets new shells.
+    private var titles: [UInt64: String] = [:]
+    private(set) var active: UInt64?
+    private var sessions: [(connection: UInt64, session: TerminalSession)] = []
+    private var counters: [UInt64: Int] = [:]
+    /// FR-21: open a server behind the connection of the visible tab.
+    var onOpenInternal: ((UInt64) -> Void)?
 
     init(core: Core) {
         self.core = core
         super.init(frame: .zero)
         header.textColor = .secondaryLabelColor
-        newTab.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
-        newTab.imagePosition = .imageLeading
-        newTab.bezelStyle = .texturedRounded
-        newTab.target = self
+        for (b, symbol) in [(newTab, "plus"), (openInternal, "arrow.turn.down.right")] {
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            b.imagePosition = .imageLeading
+            b.bezelStyle = .texturedRounded
+            b.target = self
+        }
         newTab.action = #selector(openNewTab)
+        openInternal.action = #selector(openInternalServer)
+        openInternal.toolTip = "이 셸의 서버를 bastion으로 삼아 내부 서버에 접속해요 (bastion 재인증 없음)"
         empty.textColor = .tertiaryLabelColor
         tabs.tabViewType = .topTabsBezelBorder
 
-        let bar = NSStackView(views: [header, NSView(), newTab])
+        let bar = NSStackView(views: [header, NSView(), openInternal, newTab])
         for v in [bar, tabs, empty] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
@@ -50,32 +59,48 @@ final class TerminalPane: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func connected(_ id: UInt64, title: String) {
-        sessions.forEach { $0.close() }
+    /// Start over (new quick connect): drop every tab.
+    func reset() {
+        sessions.forEach { $0.session.close() }
         sessions.removeAll()
         tabs.tabViewItems.forEach(tabs.removeTabViewItem)
-        connection = id
-        self.title = title
-        counter = 0
+        titles.removeAll()
+        counters.removeAll()
+        active = nil
         render()
-        open(startDir: nil)
+    }
+
+    /// Registers a connection. `makeActive` routes "새 셸" and the remote pane's
+    /// "여기서 터미널 열기" to it. Opens a first shell unless `openShell` is false.
+    func connected(_ id: UInt64, title: String, makeActive: Bool = true, openShell: Bool = true) {
+        titles[id] = title
+        if makeActive { active = id }
+        if openShell { open(on: id, startDir: nil) }
+        render()
     }
 
     /// Keeps tab contents visible but read-only (기획서 §7.3 "연결 끊김").
-    func disconnected() {
-        connection = nil
-        sessions.forEach { $0.markEnded("연결이 끊겼어요") }
+    func disconnected(_ id: UInt64) {
+        titles[id] = nil
+        if active == id { active = nil }
+        sessions.filter { $0.connection == id }.forEach { $0.session.markEnded("연결이 끊겼어요") }
         render()
     }
 
     func open(startDir: String?) {
-        guard let connection else { return }
-        counter += 1
+        guard let active else { return }
+        open(on: active, startDir: startDir)
+    }
+
+    func open(on connection: UInt64, startDir: String?) {
+        guard let title = titles[connection] else { return }
+        let n = (counters[connection] ?? 0) + 1
+        counters[connection] = n
         let session = TerminalSession(core: core)
         session.onEnded = { [weak self] in self?.render() }
-        sessions.append(session)
+        sessions.append((connection, session))
         let item = NSTabViewItem(identifier: session)
-        item.label = "\(title) #\(counter)"
+        item.label = n == 1 ? title : "\(title) #\(n)"
         item.view = session.host
         tabs.addTabViewItem(item)
         tabs.selectTabViewItem(item)
@@ -90,11 +115,27 @@ final class TerminalPane: NSView {
         s.focus()
     }
 
-    @objc private func openNewTab() { open(startDir: nil) }
+    /// Connection of the visible tab, if it is still open.
+    private var visibleConnection: UInt64? {
+        guard let s = tabs.selectedTabViewItem?.identifier as? TerminalSession,
+              let c = sessions.first(where: { $0.session === s })?.connection,
+              titles[c] != nil else { return active }
+        return c
+    }
+
+    @objc private func openNewTab() {
+        if let c = visibleConnection { open(on: c, startDir: nil) }
+    }
+
+    @objc private func openInternalServer() {
+        if let c = visibleConnection { onOpenInternal?(c) }
+    }
 
     private func render() {
-        header.stringValue = connection == nil ? "터미널" : "터미널 · \(title)"
-        newTab.isEnabled = connection != nil
+        let names = Set(titles.values)
+        header.stringValue = names.isEmpty ? "터미널" : "터미널 · " + names.sorted().joined(separator: ", ")
+        newTab.isEnabled = !titles.isEmpty
+        openInternal.isEnabled = !titles.isEmpty
         let hasTabs = !tabs.tabViewItems.isEmpty
         tabs.isHidden = !hasTabs
         empty.isHidden = hasTabs

@@ -3,7 +3,7 @@
 ```sh
 docker compose -f tests/docker/compose.yml up -d --build
 # bastion: 127.0.0.1:2201 · 내부 서버: app01:22 (bastion 경유로만)
-# 계정 jena / jena-test (시험 전용)
+# 계정 jena / jena-test, expired / old-pass-1 (비밀번호 만료 상태 — 시험 전용)
 docker compose -f tests/docker/compose.yml down
 ```
 

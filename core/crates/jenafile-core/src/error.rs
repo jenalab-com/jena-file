@@ -17,6 +17,9 @@ pub enum CoreError {
     /// Server-side failure. `detail` carries what the server said (stderr / exit status).
     #[error("{hop}: {message}")]
     Server { hop: Hop, message: String, detail: Option<String> },
+    /// The bastion is fine but could not reach the next host (AC-4).
+    #[error("bastion could not reach {host}:{port}: {message}")]
+    TunnelFailed { host: String, port: u16, message: String },
     #[error("cancelled")]
     Cancelled,
     #[error("connection {0} is not open")]

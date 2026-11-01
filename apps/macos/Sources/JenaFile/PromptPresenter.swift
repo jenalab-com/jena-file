@@ -6,32 +6,40 @@ import JenaFileCore
 @MainActor
 final class PromptPresenter {
     private weak var window: NSWindow?
-    private var queue: [(UInt64, PromptKind)] = []
+    private var queue: [(UInt64, Hop, PromptKind)] = []
     private var showing = false
     private let answer: (UInt64, PromptAnswer) -> Void
-    /// Quick-connect password, used once for the first attempt then forgotten.
+    /// Quick-connect password for the target (not the bastion), used once for the
+    /// first attempt then forgotten.
     var pendingPassword: String?
+    /// Dev only (JENAFILE_DEV_VIA_PASSWORD): same, for the bastion.
+    var pendingBastionPassword: String?
 
     init(window: NSWindow, answer: @escaping (UInt64, PromptAnswer) -> Void) {
         self.window = window
         self.answer = answer
     }
 
-    func present(prompt: UInt64, kind: PromptKind) {
-        if case .password(_, _, let attempt) = kind, attempt == 1, let pw = pendingPassword, !pw.isEmpty {
+    func present(prompt: UInt64, hop: Hop, kind: PromptKind) {
+        if hop == .target, case .password(_, _, let attempt) = kind, attempt == 1, let pw = pendingPassword, !pw.isEmpty {
             pendingPassword = nil
             answer(prompt, .secret(value: pw))
             return
         }
-        queue.append((prompt, kind))
+        if hop == .bastion, case .password(_, _, 1) = kind, let pw = pendingBastionPassword {
+            pendingBastionPassword = nil
+            answer(prompt, .secret(value: pw))
+            return
+        }
+        queue.append((prompt, hop, kind))
         showNext()
     }
 
     private func showNext() {
         guard !showing, let window, !queue.isEmpty else { return }
         showing = true
-        let (prompt, kind) = queue.removeFirst()
-        let (alert, read) = makeAlert(kind)
+        let (prompt, hop, kind) = queue.removeFirst()
+        let (alert, read) = makeAlert(kind, hop: hop)
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             self.answer(prompt, read(response))
@@ -40,11 +48,12 @@ final class PromptPresenter {
         }
     }
 
-    private func makeAlert(_ kind: PromptKind) -> (NSAlert, (NSApplication.ModalResponse) -> PromptAnswer) {
+    private func makeAlert(_ kind: PromptKind, hop: Hop) -> (NSAlert, (NSApplication.ModalResponse) -> PromptAnswer) {
         let alert = NSAlert()
+        let side = hop == .bastion ? "bastion " : ""
         switch kind {
         case .hostKeyUnknown(let host, let port, let key):
-            alert.messageText = "처음 접속하는 서버예요"
+            alert.messageText = "처음 접속하는 \(side.isEmpty ? "서버" : "bastion")예요"
             alert.informativeText = """
             \(hostLabel(host, port))의 호스트 키를 확인해 주세요.
 
@@ -74,7 +83,7 @@ final class PromptPresenter {
             return (alert, { $0 == .alertSecondButtonReturn ? .accept : .reject })
 
         case .password(let user, let host, let attempt):
-            alert.messageText = attempt > 1 ? "비밀번호가 맞지 않아요" : "비밀번호를 입력해 주세요"
+            alert.messageText = attempt > 1 ? "\(side)비밀번호가 맞지 않아요" : "\(side)비밀번호를 입력해 주세요"
             alert.informativeText = "\(user)@\(host)" + (attempt > 1 ? " (\(attempt)번째 시도)" : "")
             let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
             alert.accessoryView = field
