@@ -1,0 +1,16 @@
+# bastion: 127.0.0.1:2201 from the host   app01: internal only, reached via bastion
+# user jena / password jena-test (test containers only)
+name: jenafile-test
+services:
+  bastion:
+    build: .
+    hostname: bastion
+    ports: ["127.0.0.1:2201:22"]
+    cap_add: [NET_ADMIN]   # for latency tests: tc qdisc add dev eth0 root netem delay 20ms
+    networks: [internal]
+  app01:
+    build: .
+    hostname: app01
+    networks: [internal]
+networks:
+  internal: {}

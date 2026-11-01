@@ -10,7 +10,7 @@ bastion 뒤 서버에 파일을 올리려면 지금은 터미널에서 `ssh -L`�
 
 ## 상태
 
-**설계 단계** — 기획과 기술 검증(스파이크)을 마쳤고, 기술 구조 설계 후 MVP 1차 구현에 들어간다.
+**개발 초기** — 기획·기술 검증·구조 설계를 마치고 MVP 1차 구현 중(M0 뼈대 완료).
 
 | 문서 | 내용 |
 |---|---|
@@ -19,10 +19,21 @@ bastion 뒤 서버에 파일을 올리려면 지금은 터미널에서 `ssh -L`�
 | [docs/spike/2026-11-01-russh.md](docs/spike/2026-11-01-russh.md) | russh 검증 — 직접/경유 SFTP, 인증, 처리량 |
 | [docs/spike/2026-11-01-uniffi.md](docs/spike/2026-11-01-uniffi.md) | Swift ↔ Rust(UniFFI) 연결, SwiftTerm 한글 입력 |
 
-## 구조 (예정)
+## 빌드
 
-- **핵심**: Rust — [russh](https://github.com/Eugeny/russh) 기반 SSH/SFTP, 연결·전송 대기열·서버 목록
-- **화면**: macOS는 Swift/AppKit + [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), Windows는 C# 네이티브(이후)
+필요: macOS 13+, Xcode(Swift 6), Rust(rustup).
+
+```sh
+make run        # Rust 핵심 → xcframework → 앱 빌드(build/JenaFile.app) → 실행
+make test       # cargo test + swift test
+```
+
+시험용 SSH 서버: [tests/docker/README.md](tests/docker/README.md)
+
+## 구조
+
+- **핵심** (`core/`): Rust — [russh](https://github.com/Eugeny/russh) 기반 SSH/SFTP, 연결·전송 대기열·서버 목록
+- **화면** (`apps/macos/`): macOS는 Swift/AppKit + [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), Windows는 C# 네이티브(이후)
 - **연결**: [UniFFI](https://github.com/mozilla/uniffi-rs)로 Rust 핵심을 Swift에서 호출
 
 `spike/`는 기술 검증용 코드이며 제품 코드가 아니다. 다시 돌리는 법은 [spike/README.md](spike/README.md).

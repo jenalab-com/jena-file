@@ -1,4 +1,4 @@
-# jena-file 기술 구조 설계 (v0.1)
+# jena-file 기술 구조 설계 (v0.2)
 
 > 작성 2026-11-01 · 근거: [기획서](기획서.md) v0.11, [russh 스파이크](spike/2026-11-01-russh.md), [UniFFI·SwiftTerm 스파이크](spike/2026-11-01-uniffi.md)
 > 범위: **MVP 1차**(기획서 §6.1 — 직접 SFTP + bastion 경유 + 같은 세션 터미널 + 전송 대기열 + 서버 관리). 2차(FTP/FTPS·3개 동시 연결 등)와 Windows는 이 구조 위에 얹을 수 있게만 열어 둔다.
@@ -137,7 +137,7 @@ Idle → Connecting{step} → AwaitingPrompt{prompt_id} → Ready
 
 - `scripts/build-core.sh`: `MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release` → `uniffi-bindgen-swift`(헤더·modulemap·Swift) → `xcodebuild -create-xcframework` → `apps/macos/Vendor/`, 생성 Swift는 `apps/macos/Sources/JenaFileCore/`. 둘 다 `.gitignore`.
 - 앱: `swift build` + `.app` 번들 조립·서명은 jena-note의 `Makefile`·`scripts/` 방식을 따른다.
-- 최소 macOS: **13**(SwiftTerm·스파이크 기준). — 결정 대기 §12-Q2.
+- 최소 macOS: **13**(ADR-009).
 - arm64 우선. Intel(x86_64) 범용 빌드는 xcframework에 두 아키텍처를 넣으면 되므로 배포 단계에서 결정.
 
 ## 11. 시험 전략
@@ -159,14 +159,12 @@ Idle → Connecting{step} → AwaitingPrompt{prompt_id} → Ready
 | ADR-003 | 연결마다 액터(tokio 작업 + 명령 채널) | 재연결·명령 순서·상태 단일 소유 | 확정 |
 | ADR-004 | 사용자 묻기는 비동기 요청/응답(prompt_id) | 동기 콜백은 연결 작업을 묶음(스파이크) | 확정 |
 | ADR-005 | 비밀은 OS 저장소, 화면 쪽이 관리 | 핵심에 비밀을 두지 않음, OS별 저장소 차이를 화면 층에 가둠 | 확정 |
-| ADR-006 | 새 호스트 키는 앱 전용 known_hosts에 기록, `~/.ssh/known_hosts`는 읽기만 | 사용자 파일 불변 | **Q1 확인 필요** |
+| ADR-006 | 새 호스트 키는 앱 전용 known_hosts에 기록, `~/.ssh/known_hosts`는 읽기만 | 사용자 파일 불변 | 확정(2026-11-01) |
 | ADR-007 | UniFFI 생성물·xcframework는 커밋 안 함 | 빌드 산출물. 소스와 어긋날 위험 제거 | 확정 |
 | ADR-008 | SwiftTerm은 jenalab 포크 → 원본 PR | 조합 중 커서 수정 | 확정 |
+| ADR-009 | 최소 macOS 13 (Ventura) | SwiftTerm·Swift 동시성 기준 | 확정(2026-11-01) |
 
-### 결정 대기 (제롬님)
-
-- **Q1** 새로 신뢰한 호스트 키를 어디에 적을까? — 추천: **앱 전용 파일**(위 ADR-006). 대안: `~/.ssh/known_hosts`에도 함께 적기(터미널 `ssh`와 신뢰 공유, 대신 사용자 파일을 고침).
-- **Q2** 최소 macOS 버전 — 추천: **13 (Ventura)**. jena-note는 11이지만 SwiftTerm과 Swift 동시성 기능을 편하게 쓰려면 13이 안전.
+Q1·Q2는 2026-11-01 추천안으로 확정(ADR-006, ADR-009).
 
 ## 13. MVP 1차 작업 순서
 
@@ -174,7 +172,7 @@ Idle → Connecting{step} → AwaitingPrompt{prompt_id} → Ready
 
 | 단계 | 내용 | 완료 기준 |
 |---|---|---|
-| **M0 뼈대** | 저장소 구성(§2), `build-core.sh`, 빈 AppKit 창이 core 버전 문자열을 표시, `tests/docker` 이전 | `make app` 한 번으로 창이 뜸 |
+| **M0 뼈대** ✅ | 저장소 구성(§2), `build-core.sh`, 빈 AppKit 창이 core 버전 문자열을 표시, `tests/docker` 이전 | `make app` 한 번으로 창이 뜸 — **완료 2026-11-01** |
 | **M1 직접 SFTP** | 연결 액터·상태 기계, 호스트 키/비밀번호 묻기(§5), 오른쪽 원격 파일 창 목록·폴더 이동 | AC-1 중 "목록" 부분, AC-6(호스트 키 바뀜 차단) |
 | **M2 터미널** | 같은 세션 PTY 탭, SwiftTerm 포크(커서 수정), 파일 창 ↔ 터미널 연동(FR-33) | AC-1 전체(한 번 접속 → 목록 + 셸) |
 | **M3 bastion** | 경유 연결 트리, bastion 터미널에서 [내부 서버 열기](FR-21), ssh 명령 붙여넣기(FR-09), 비밀번호 만료 안내(FR-03b) | AC-2·3·4 — **초기 의도 해결 시점** |
