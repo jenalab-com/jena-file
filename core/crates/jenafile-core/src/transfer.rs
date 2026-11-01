@@ -18,8 +18,9 @@ use crate::events::{
 use crate::prompt::PromptBroker;
 use crate::transport::{Files, RemoteStat};
 
-/// Files running at once per connection (기획서 FR-12).
+/// Files running at once per connection by default (기획서 FR-12); see `set_limit`.
 pub(crate) const PER_CONNECTION: usize = 3;
+pub(crate) const MAX_PER_CONNECTION: usize = 10;
 const TICK: Duration = Duration::from_millis(100);
 
 /// Files enqueued together share the "apply to all" answer.
@@ -45,6 +46,7 @@ pub(crate) struct Transfers {
     items: Mutex<BTreeMap<TransferId, Item>>,
     next_id: AtomicU64,
     ticking: AtomicBool,
+    per_connection: std::sync::atomic::AtomicUsize,
 }
 
 /// A file to copy, already expanded from folders.
@@ -63,11 +65,25 @@ impl Transfers {
             items: Mutex::new(BTreeMap::new()),
             next_id: AtomicU64::new(1),
             ticking: AtomicBool::new(false),
+            per_connection: std::sync::atomic::AtomicUsize::new(PER_CONNECTION),
         })
     }
 
-    pub(crate) fn enqueue(self: &Arc<Self>, connection: ConnectionId, files: Files, jobs: Vec<Job>) -> Vec<TransferId> {
-        let batch = Arc::new(Batch::default());
+    /// Files running at once per connection, 1…10 (설정 > 전송).
+    pub(crate) fn set_limit(self: &Arc<Self>, n: usize) {
+        self.per_connection.store(n.clamp(1, MAX_PER_CONNECTION), Ordering::Relaxed);
+        self.pump();
+    }
+
+    /// `on_conflict`: answer for existing destinations without asking (설정); None = ask.
+    pub(crate) fn enqueue(
+        self: &Arc<Self>,
+        connection: ConnectionId,
+        files: Files,
+        jobs: Vec<Job>,
+        on_conflict: Option<ConflictAction>,
+    ) -> Vec<TransferId> {
+        let batch = Arc::new(Batch { policy: Mutex::new(on_conflict) });
         let mut ids = Vec::new();
         {
             let mut items = self.items.lock().unwrap();
@@ -167,6 +183,7 @@ impl Transfers {
 
     /// Start queued items while their connection has free slots.
     fn pump(self: &Arc<Self>) {
+        let limit = self.per_connection.load(Ordering::Relaxed);
         let mut items = self.items.lock().unwrap();
         let mut running: BTreeMap<ConnectionId, usize> = BTreeMap::new();
         for i in items.values().filter(|i| i.info.state == TransferState::Running) {
@@ -176,7 +193,7 @@ impl Transfers {
         for id in ready {
             let item = items.get_mut(&id).unwrap();
             let slot = running.entry(item.info.connection).or_default();
-            if *slot >= PER_CONNECTION {
+            if *slot >= limit {
                 continue;
             }
             *slot += 1;

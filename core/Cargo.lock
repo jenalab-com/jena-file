@@ -1062,6 +1062,8 @@ dependencies = [
  "log",
  "russh",
  "russh-sftp",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

@@ -63,6 +63,41 @@ pub fn parse_ssh_command(text: String) -> Option<ParsedSsh> {
     })
 }
 
+/// A saved server (S-02). No secrets: passwords live in the Keychain by `id`.
+#[derive(uniffi::Record, Clone)]
+pub struct Profile {
+    pub id: String,
+    pub name: String,
+    pub group: String,
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub via: Option<ProfileVia>,
+    pub remote_dir: Option<String>,
+    pub local_dir: Option<String>,
+    pub save_password: bool,
+}
+
+#[derive(uniffi::Enum, Clone)]
+pub enum ProfileVia {
+    Server { id: String },
+    Endpoint { host: String, port: u16, user: String },
+}
+
+/// Profiles made from a pasted `ssh` command (FR-09). Not saved yet.
+#[derive(uniffi::Record)]
+pub struct SshProfiles {
+    pub bastion: Option<Profile>,
+    pub target: Profile,
+}
+
+#[uniffi::export]
+pub fn profiles_from_ssh_command(text: String) -> Option<SshProfiles> {
+    let parsed = jc::parse_ssh_command(&text)?;
+    let (bastion, target) = jc::profiles_from_ssh(&parsed)?;
+    Some(SshProfiles { bastion: bastion.map(Into::into), target: target.into() })
+}
+
 #[derive(uniffi::Record)]
 pub struct RemoteEntry {
     pub name: String,
@@ -245,6 +280,7 @@ impl jc::TerminalSink for TerminalBridge {
 #[derive(uniffi::Object)]
 pub struct Core {
     manager: jc::ConnectionManager,
+    profiles: jc::ProfileStore,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -258,7 +294,8 @@ impl Core {
             user_known_hosts: user_known_hosts.map(PathBuf::from),
             max_connections: 3,
         };
-        Arc::new(Self { manager: jc::ConnectionManager::new(config, Arc::new(Sink(listener))) })
+        let profiles = jc::ProfileStore::new(&config.data_dir);
+        Arc::new(Self { manager: jc::ConnectionManager::new(config, Arc::new(Sink(listener))), profiles })
     }
 
     /// `with_sftp = false`: terminal only (e.g. to change an expired password).
@@ -298,13 +335,48 @@ impl Core {
     }
 
     /// Queue uploads of local files / folders into `remote_dir`.
-    pub async fn upload(&self, connection: u64, local_paths: Vec<String>, remote_dir: String) -> Result<Vec<u64>, CoreError> {
-        Ok(self.manager.upload(connection, local_paths.into_iter().map(PathBuf::from).collect(), remote_dir).await?)
+    /// `on_conflict`: answer for existing files without asking (설정); None = ask.
+    pub async fn upload(
+        &self,
+        connection: u64,
+        local_paths: Vec<String>,
+        remote_dir: String,
+        on_conflict: Option<ConflictAction>,
+    ) -> Result<Vec<u64>, CoreError> {
+        let locals = local_paths.into_iter().map(PathBuf::from).collect();
+        Ok(self.manager.upload(connection, locals, remote_dir, on_conflict.map(Into::into)).await?)
     }
 
     /// Queue downloads of remote files / folders into `local_dir`.
-    pub async fn download(&self, connection: u64, remote_paths: Vec<String>, local_dir: String) -> Result<Vec<u64>, CoreError> {
-        Ok(self.manager.download(connection, remote_paths, PathBuf::from(local_dir)).await?)
+    pub async fn download(
+        &self,
+        connection: u64,
+        remote_paths: Vec<String>,
+        local_dir: String,
+        on_conflict: Option<ConflictAction>,
+    ) -> Result<Vec<u64>, CoreError> {
+        Ok(self.manager.download(connection, remote_paths, PathBuf::from(local_dir), on_conflict.map(Into::into)).await?)
+    }
+
+    /// Files transferred at once per connection (1…10).
+    pub fn set_transfer_limit(&self, limit: u32) {
+        self.manager.set_transfer_limit(limit)
+    }
+
+    // ---- saved servers ----
+
+    pub fn list_profiles(&self) -> Result<Vec<Profile>, CoreError> {
+        Ok(self.profiles.list()?.into_iter().map(Into::into).collect())
+    }
+
+    /// Insert or update. A new profile (empty id) gets an id.
+    pub fn save_profile(&self, profile: Profile) -> Result<Profile, CoreError> {
+        Ok(self.profiles.save(profile.into())?.into())
+    }
+
+    /// Fails while another server uses it as bastion.
+    pub fn delete_profile(&self, id: String) -> Result<(), CoreError> {
+        Ok(self.profiles.delete(&id)?)
     }
 
     pub fn pause_transfer(&self, transfer: u64) {
@@ -455,15 +527,7 @@ impl From<PromptAnswer> for jc::PromptAnswer {
             PromptAnswer::Reject => jc::PromptAnswer::Reject,
             PromptAnswer::Secret { value } => jc::PromptAnswer::Secret(value),
             PromptAnswer::Responses { values } => jc::PromptAnswer::Responses(values),
-            PromptAnswer::Conflict { action, apply_to_all } => jc::PromptAnswer::Conflict {
-                action: match action {
-                    ConflictAction::Overwrite => jc::ConflictAction::Overwrite,
-                    ConflictAction::Resume => jc::ConflictAction::Resume,
-                    ConflictAction::Rename => jc::ConflictAction::Rename,
-                    ConflictAction::Skip => jc::ConflictAction::Skip,
-                },
-                apply_to_all,
-            },
+            PromptAnswer::Conflict { action, apply_to_all } => jc::PromptAnswer::Conflict { action: action.into(), apply_to_all },
             PromptAnswer::Cancel => jc::PromptAnswer::Cancel,
         }
     }
@@ -523,6 +587,57 @@ impl From<jc::TransferInfo> for TransferInfo {
                 jc::TransferState::Cancelled => TransferState::Cancelled,
                 jc::TransferState::Failed { message } => TransferState::Failed { message },
             },
+        }
+    }
+}
+
+impl From<ConflictAction> for jc::ConflictAction {
+    fn from(a: ConflictAction) -> Self {
+        match a {
+            ConflictAction::Overwrite => jc::ConflictAction::Overwrite,
+            ConflictAction::Resume => jc::ConflictAction::Resume,
+            ConflictAction::Rename => jc::ConflictAction::Rename,
+            ConflictAction::Skip => jc::ConflictAction::Skip,
+        }
+    }
+}
+
+impl From<jc::Profile> for Profile {
+    fn from(p: jc::Profile) -> Self {
+        Profile {
+            id: p.id,
+            name: p.name,
+            group: p.group,
+            host: p.host,
+            port: p.port,
+            user: p.user,
+            via: p.via.map(|v| match v {
+                jc::ProfileVia::Server { id } => ProfileVia::Server { id },
+                jc::ProfileVia::Endpoint { host, port, user } => ProfileVia::Endpoint { host, port, user },
+            }),
+            remote_dir: p.remote_dir,
+            local_dir: p.local_dir,
+            save_password: p.save_password,
+        }
+    }
+}
+
+impl From<Profile> for jc::Profile {
+    fn from(p: Profile) -> Self {
+        jc::Profile {
+            id: p.id,
+            name: p.name,
+            group: p.group,
+            host: p.host,
+            port: p.port,
+            user: p.user,
+            via: p.via.map(|v| match v {
+                ProfileVia::Server { id } => jc::ProfileVia::Server { id },
+                ProfileVia::Endpoint { host, port, user } => jc::ProfileVia::Endpoint { host, port, user },
+            }),
+            remote_dir: p.remote_dir,
+            local_dir: p.local_dir,
+            save_password: p.save_password,
         }
     }
 }

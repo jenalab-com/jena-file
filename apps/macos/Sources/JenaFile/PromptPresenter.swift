@@ -10,11 +10,17 @@ final class PromptPresenter {
     private var queue: [(UInt64, Hop, PromptKind)] = []
     private var showing = false
     private let answer: (UInt64, PromptAnswer) -> Void
-    /// Quick-connect password for the target (not the bastion), used once for the
-    /// first attempt then forgotten.
-    var pendingPassword: String?
-    /// Dev only (JENAFILE_DEV_VIA_PASSWORD): same, for the bastion.
-    var pendingBastionPassword: String?
+    /// Passwords we already have for this connect attempt (quick-connect field or
+    /// Keychain), per hop. Used once for the first attempt, then forgotten.
+    var known: [Hop: String] = [:]
+    /// Passwords the user typed in a sheet during this attempt, per hop — the
+    /// caller offers to save them once the connection works (FR-03a).
+    private(set) var typed: [Hop: String] = [:]
+
+    func beginAttempt(known: [Hop: String]) {
+        self.known = known.filter { !$0.value.isEmpty }
+        typed = [:]
+    }
 
     init(window: NSWindow, answer: @escaping (UInt64, PromptAnswer) -> Void) {
         self.window = window
@@ -22,13 +28,7 @@ final class PromptPresenter {
     }
 
     func present(prompt: UInt64, hop: Hop, kind: PromptKind) {
-        if hop == .target, case .password(_, _, let attempt) = kind, attempt == 1, let pw = pendingPassword, !pw.isEmpty {
-            pendingPassword = nil
-            answer(prompt, .secret(value: pw))
-            return
-        }
-        if hop == .bastion, case .password(_, _, 1) = kind, let pw = pendingBastionPassword {
-            pendingBastionPassword = nil
+        if case .password(_, _, 1) = kind, let pw = known.removeValue(forKey: hop) {
             answer(prompt, .secret(value: pw))
             return
         }
@@ -91,7 +91,11 @@ final class PromptPresenter {
             alert.window.initialFirstResponder = field
             alert.addButton(withTitle: "접속")
             alert.addButton(withTitle: "취소")
-            return (alert, { $0 == .alertFirstButtonReturn ? .secret(value: field.stringValue) : .cancel })
+            return (alert, { [weak self] response in
+                guard response == .alertFirstButtonReturn else { return .cancel }
+                self?.typed[hop] = field.stringValue
+                return .secret(value: field.stringValue)
+            })
 
         case .conflict(let direction, let destination, let sourceSize, let sourceModified,
                        let destinationSize, let destinationModified, let canResume):

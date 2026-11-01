@@ -1,4 +1,5 @@
 import AppKit
+import JenaFileKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: AppController?
@@ -6,8 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             do {
-                let controller = try AppController()
+                let controller = AppController(dataDir: try AppPaths.dataDirectory().path)
                 self.controller = controller
+                MainMenu.install(controller: controller)
                 NSApp.activate(ignoringOtherApps: true)
                 controller.window.center()
                 controller.window.makeKeyAndOrderFront(nil)

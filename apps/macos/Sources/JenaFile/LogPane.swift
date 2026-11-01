@@ -25,16 +25,36 @@ final class LogPane: NSScrollView {
 
     enum Tone { case info, warn, error }
 
+    private var lines: [(time: Date, message: String, tone: Tone)] = []
+    /// 보기 > 상태 로그에서 오류만 보기 (FR-50).
+    var errorsOnly = false {
+        didSet { redraw() }
+    }
+
     func append(_ message: String, tone: Tone = .info) {
-        let color: NSColor = switch tone {
+        let entry = (Date(), message, tone)
+        lines.append(entry)
+        if lines.count > 5000 { lines.removeFirst(lines.count - 5000) }
+        if !errorsOnly || tone != .info {
+            text.textStorage?.append(render(entry))
+            text.scrollToEndOfDocument(nil)
+        }
+    }
+
+    private func render(_ e: (time: Date, message: String, tone: Tone)) -> NSAttributedString {
+        let color: NSColor = switch e.tone {
         case .info: .labelColor
         case .warn: .systemOrange
         case .error: .systemRed
         }
-        let line = NSAttributedString(
-            string: "\(timeFormat.string(from: Date()))  \(message)\n",
-            attributes: [.font: text.font!, .foregroundColor: color])
-        text.textStorage?.append(line)
+        return NSAttributedString(string: "\(timeFormat.string(from: e.time))  \(e.message)\n",
+                                  attributes: [.font: text.font!, .foregroundColor: color])
+    }
+
+    private func redraw() {
+        let all = NSMutableAttributedString()
+        for e in lines where !errorsOnly || e.tone != .info { all.append(render(e)) }
+        text.textStorage?.setAttributedString(all)
         text.scrollToEndOfDocument(nil)
     }
 }

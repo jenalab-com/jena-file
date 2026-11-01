@@ -31,7 +31,8 @@ final class SplitRatios: NSObject, NSSplitViewDelegate {
     }
 
     func splitViewDidResizeSubviews(_ notification: Notification) {
-        guard ready, let split = notification.object as? NSSplitView else { return }
+        guard ready, let split = notification.object as? NSSplitView,
+              !split.arrangedSubviews.contains(where: \.isHidden) else { return }   // a pane is turned off in 보기
         let size = total(split)
         guard size > 100 else { return }
         let ratios = split.arrangedSubviews.dropLast().map { v in
@@ -41,7 +42,54 @@ final class SplitRatios: NSObject, NSSplitViewDelegate {
     }
 }
 
-/// Keeps the ratio keepers alive as long as the window.
+/// Keeps the layout (and its ratio keepers) alive as long as the window.
 final class MainNSWindow: NSWindow {
-    var splitKeepers: [SplitRatios] = []
+    var layout: MainLayout?
+}
+
+/// Panes the 보기 menu can turn off (기획서 §7.1).
+enum Pane {
+    case log, transfers, terminal
+}
+
+/// Shows / hides panes. NSSplitView collapses hidden arranged subviews; the top
+/// row disappears when both of its panes are off.
+@MainActor
+final class MainLayout {
+    let rows: NSSplitView
+    let top: NSSplitView
+    let keepers: [(NSSplitView, SplitRatios)]
+    private let log: NSView
+    private let transfers: NSView
+    private let terminal: NSView
+
+    init(rows: NSSplitView, top: NSSplitView, keepers: [(NSSplitView, SplitRatios)]) {
+        self.rows = rows
+        self.top = top
+        self.keepers = keepers
+        log = top.arrangedSubviews[0]
+        transfers = top.arrangedSubviews[1]
+        terminal = rows.arrangedSubviews[2]
+    }
+
+    func isVisible(_ pane: Pane) -> Bool { !view(pane).isHidden }
+
+    func setVisible(_ pane: Pane, _ visible: Bool) {
+        view(pane).isHidden = !visible
+        top.isHidden = log.isHidden && transfers.isHidden
+        for split in [top, rows] { split.adjustSubviews() }
+        // Re-apply saved ratios once everything in a split is visible again.
+        for (split, keeper) in keepers where !split.arrangedSubviews.contains(where: \.isHidden) {
+            split.layoutSubtreeIfNeeded()
+            keeper.apply(to: split)
+        }
+    }
+
+    private func view(_ pane: Pane) -> NSView {
+        switch pane {
+        case .log: log
+        case .transfers: transfers
+        case .terminal: terminal
+        }
+    }
 }

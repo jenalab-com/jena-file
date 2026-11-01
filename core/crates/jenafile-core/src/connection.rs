@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::error::CoreError;
-use crate::events::{ConnectionId, ConnectionState, Event, EventSink, Hop, LogLevel, PromptAnswer, PromptId, TransferId};
+use crate::events::{ConflictAction, ConnectionId, ConnectionState, Event, EventSink, Hop, LogLevel, PromptAnswer, PromptId, TransferId};
 use crate::prompt::PromptBroker;
 use crate::transfer::{self, Transfers};
 use crate::transport::{self, Files, HopContext, KnownHosts, RemoteEntry, Session, TerminalInput, TerminalSink, Tunnel};
@@ -260,17 +260,35 @@ impl ConnectionManager {
     }
 
     /// Queues uploads of local files / folders into `remote_dir` (folders are recreated).
-    pub async fn upload(&self, id: ConnectionId, locals: Vec<PathBuf>, remote_dir: String) -> Result<Vec<TransferId>, CoreError> {
+    /// `on_conflict`: what to do with existing files without asking; None = ask.
+    pub async fn upload(
+        &self,
+        id: ConnectionId,
+        locals: Vec<PathBuf>,
+        remote_dir: String,
+        on_conflict: Option<ConflictAction>,
+    ) -> Result<Vec<TransferId>, CoreError> {
         let files = self.files(id).await?;
         let jobs = transfer::plan_upload(&files, &locals, &remote_dir).await?;
-        Ok(self.inner.transfers.enqueue(id, files, jobs))
+        Ok(self.inner.transfers.enqueue(id, files, jobs, on_conflict))
     }
 
     /// Queues downloads of remote files / folders into `local_dir`.
-    pub async fn download(&self, id: ConnectionId, remotes: Vec<String>, local_dir: PathBuf) -> Result<Vec<TransferId>, CoreError> {
+    pub async fn download(
+        &self,
+        id: ConnectionId,
+        remotes: Vec<String>,
+        local_dir: PathBuf,
+        on_conflict: Option<ConflictAction>,
+    ) -> Result<Vec<TransferId>, CoreError> {
         let files = self.files(id).await?;
         let jobs = transfer::plan_download(&files, &remotes, &local_dir).await?;
-        Ok(self.inner.transfers.enqueue(id, files, jobs))
+        Ok(self.inner.transfers.enqueue(id, files, jobs, on_conflict))
+    }
+
+    /// Files transferred at once per connection (1…10).
+    pub fn set_transfer_limit(&self, n: u32) {
+        self.inner.transfers.set_limit(n as usize)
     }
 
     pub fn pause_transfer(&self, id: TransferId) {

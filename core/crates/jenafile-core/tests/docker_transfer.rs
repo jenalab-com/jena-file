@@ -19,7 +19,7 @@ fn unique(tag: &str) -> String {
 async fn remote_folder(m: &ConnectionManager, id: ConnectionId, tmp: &Path, name: &str) -> String {
     let local = tmp.join("mk").join(name);
     fs::create_dir_all(&local).unwrap();
-    assert!(m.upload(id, vec![local], "/tmp".into()).await.unwrap().is_empty());
+    assert!(m.upload(id, vec![local], "/tmp".into(), None).await.unwrap().is_empty());
     format!("/tmp/{name}")
 }
 
@@ -41,7 +41,7 @@ async fn round_trip_files_and_folders() {
     fs::write(src.join(&pack).join("inner/한글 이름.txt"), "안녕하세요\n").unwrap();
     fs::write(src.join(&pack).join("inner/empty"), b"").unwrap();
 
-    let ids = m.upload(id, vec![src.join(&pack)], "/tmp".into()).await.unwrap();
+    let ids = m.upload(id, vec![src.join(&pack)], "/tmp".into(), None).await.unwrap();
     assert_eq!(ids.len(), 3);
     for t in settle(&script, &ids).await {
         assert_eq!(t.state, TransferState::Done, "{t:?}");
@@ -50,7 +50,7 @@ async fn round_trip_files_and_folders() {
 
     let back = tmp.path().join("back");
     fs::create_dir_all(&back).unwrap();
-    let ids = m.download(id, vec![format!("/tmp/{pack}")], back.clone()).await.unwrap();
+    let ids = m.download(id, vec![format!("/tmp/{pack}")], back.clone(), None).await.unwrap();
     settle(&script, &ids).await;
     for rel in ["big.bin", "inner/한글 이름.txt", "inner/empty"] {
         assert_eq!(fs::read(back.join(&pack).join(rel)).unwrap(), fs::read(src.join(&pack).join(rel)).unwrap(), "{rel}");
@@ -69,7 +69,7 @@ async fn three_at_a_time() {
         p
     }).collect();
     let dir = remote_folder(&m, id, tmp.path(), &unique("three")).await;
-    let ids = m.upload(id, files, dir).await.unwrap();
+    let ids = m.upload(id, files, dir, None).await.unwrap();
     settle(&script, &ids).await;
 
     let (mut running, mut peak) = (std::collections::BTreeSet::new(), 0);
@@ -95,28 +95,28 @@ async fn conflicts_and_resume() {
 
     // A partial copy already on the server (first 2 MiB).
     fs::write(&file, &data[..2 << 20]).unwrap();
-    let first = m.upload(id, vec![file.clone()], remote_dir.clone()).await.unwrap();
+    let first = m.upload(id, vec![file.clone()], remote_dir.clone(), None).await.unwrap();
     assert_eq!(settle(&script, &first).await[0].state, TransferState::Done);
     fs::write(&file, &data).unwrap();
 
     // Resume: only the rest is sent, result is the whole file.
     script.asked.lock().unwrap().clear();
     script.conflicts.lock().unwrap().push(PromptAnswer::Conflict { action: ConflictAction::Resume, apply_to_all: false });
-    let ids = m.upload(id, vec![file.clone()], remote_dir.clone()).await.unwrap();
+    let ids = m.upload(id, vec![file.clone()], remote_dir.clone(), None).await.unwrap();
     assert_eq!(settle(&script, &ids).await[0].state, TransferState::Done);
     assert!(matches!(script.asked.lock().unwrap().last(), Some(PromptKind::Conflict { can_resume: true, destination_size, .. }) if *destination_size == 2 << 20));
     let check = tmp.path().join("check");
     fs::create_dir_all(&check).unwrap();
-    let d = m.download(id, vec![remote.clone()], check.clone()).await.unwrap();
+    let d = m.download(id, vec![remote.clone()], check.clone(), None).await.unwrap();
     settle(&script, &d).await;
     assert_eq!(fs::read(check.join("same.bin")).unwrap(), data, "resumed upload is byte-identical");
 
     // Skip, then Rename.
     script.conflicts.lock().unwrap().push(PromptAnswer::Conflict { action: ConflictAction::Skip, apply_to_all: false });
-    let ids = m.upload(id, vec![file.clone()], remote_dir.clone()).await.unwrap();
+    let ids = m.upload(id, vec![file.clone()], remote_dir.clone(), None).await.unwrap();
     assert_eq!(settle(&script, &ids).await[0].state, TransferState::Skipped);
     script.conflicts.lock().unwrap().push(PromptAnswer::Conflict { action: ConflictAction::Rename, apply_to_all: false });
-    let ids = m.upload(id, vec![file.clone()], remote_dir.clone()).await.unwrap();
+    let ids = m.upload(id, vec![file.clone()], remote_dir.clone(), None).await.unwrap();
     let t = settle(&script, &ids).await.remove(0);
     assert_eq!(t.state, TransferState::Done);
     assert_eq!(t.remote_path, format!("{remote_dir}/same (1).bin"));
@@ -125,7 +125,7 @@ async fn conflicts_and_resume() {
     let local = check.join("same.bin");
     fs::write(&local, &data[..1 << 20]).unwrap();
     script.conflicts.lock().unwrap().push(PromptAnswer::Conflict { action: ConflictAction::Resume, apply_to_all: false });
-    let d = m.download(id, vec![remote], check.clone()).await.unwrap();
+    let d = m.download(id, vec![remote], check.clone(), None).await.unwrap();
     settle(&script, &d).await;
     assert_eq!(fs::read(&local).unwrap(), data, "resumed download is byte-identical");
     m.disconnect(id).await;
@@ -140,7 +140,7 @@ async fn pause_and_resume_mid_file() {
     let file = tmp.path().join("pause.bin");
     fs::write(&file, &data).unwrap();
     let remote_dir = remote_folder(&m, id, tmp.path(), &unique("pause")).await;
-    let t = m.upload(id, vec![file.clone()], remote_dir.clone()).await.unwrap()[0];
+    let t = m.upload(id, vec![file.clone()], remote_dir.clone(), None).await.unwrap()[0];
 
     for _ in 0..400 {
         if transfers(&script).get(&t).is_some_and(|i| i.transferred > 0) { break; }
@@ -155,8 +155,38 @@ async fn pause_and_resume_mid_file() {
     assert_eq!(settle(&script, &[t]).await[0].state, TransferState::Done);
     let check = tmp.path().join("check");
     fs::create_dir_all(&check).unwrap();
-    let d = m.download(id, vec![format!("{remote_dir}/pause.bin")], check.clone()).await.unwrap();
+    let d = m.download(id, vec![format!("{remote_dir}/pause.bin")], check.clone(), None).await.unwrap();
     settle(&script, &d).await;
     assert!(fs::read(check.join("pause.bin")).unwrap() == data, "byte-identical after pause/resume");
+    m.disconnect(id).await;
+}
+
+/// 설정: transfer limit and a default answer for existing files (no prompt).
+#[tokio::test]
+async fn settings_limit_and_default_conflict_action() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (m, script, id) = connected(tmp.path(), 3).await;
+    m.set_transfer_limit(1);
+    let dir = remote_folder(&m, id, tmp.path(), &unique("limit")).await;
+    let files: Vec<_> = (0..4).map(|i| {
+        let p = tmp.path().join(format!("l{i}.bin"));
+        fs::write(&p, noise(1 << 20, 20 + i)).unwrap();
+        p
+    }).collect();
+    let ids = m.upload(id, files.clone(), dir.clone(), None).await.unwrap();
+    settle(&script, &ids).await;
+    let (mut running, mut peak) = (std::collections::BTreeSet::new(), 0);
+    for e in script.events.lock().unwrap().iter() {
+        if let Event::Transfer(t) = e {
+            if t.state == TransferState::Running { running.insert(t.id); } else { running.remove(&t.id); }
+            peak = peak.max(running.len());
+        }
+    }
+    assert_eq!(peak, 1);
+
+    script.asked.lock().unwrap().clear();
+    let ids = m.upload(id, files, dir, Some(ConflictAction::Skip)).await.unwrap();
+    assert!(settle(&script, &ids).await.iter().all(|t| t.state == TransferState::Skipped));
+    assert!(script.asked.lock().unwrap().is_empty(), "no prompt with a default action");
     m.disconnect(id).await;
 }

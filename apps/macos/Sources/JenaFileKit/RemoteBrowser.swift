@@ -24,11 +24,13 @@ public final class RemoteBrowser {
         self.core = core
     }
 
-    public func attach(_ connection: UInt64) async {
+    /// `startPath`: a saved server's 원격 시작 폴더; falls back to home if it fails.
+    public func attach(_ connection: UInt64, startPath: String? = nil) async {
         self.connection = connection
         do {
             let home = try await core.home(connection: connection)
-            await open(home)
+            await open(startPath ?? home)
+            if startPath != nil, case .failed = state { await open(home) }
         } catch {
             set(.failed(UserMessage.describe(error)))
         }

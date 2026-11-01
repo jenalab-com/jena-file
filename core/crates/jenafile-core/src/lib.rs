@@ -3,6 +3,7 @@
 
 mod connection;
 mod error;
+mod profile;
 mod events;
 mod prompt;
 mod ssh_command;
@@ -15,6 +16,7 @@ pub use events::{
     ConflictAction, ConnectStep, ConnectionId, ConnectionState, Direction, Event, EventSink, HostKeyInfo, Hop,
     InteractivePrompt, LogLevel, PromptAnswer, PromptId, PromptKind, TransferId, TransferInfo, TransferState,
 };
+pub use profile::{Profile, ProfileStore, ProfileVia, profiles_from_ssh};
 pub use ssh_command::{HostSpec, ParsedSsh, parse_ssh_command};
 pub use transport::{RemoteEntry, TerminalSink};
 

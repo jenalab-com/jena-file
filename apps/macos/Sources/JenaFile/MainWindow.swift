@@ -68,7 +68,7 @@ enum MainWindow {
             (middle, SplitRatios(key: "files", defaults: [0.5])),
         ]
         for (split, keeper) in keepers { keeper.apply(to: split) }
-        window.splitKeepers = keepers.map(\.1)
+        window.layout = MainLayout(rows: rows, top: top, keepers: keepers)
         return window
     }
 
