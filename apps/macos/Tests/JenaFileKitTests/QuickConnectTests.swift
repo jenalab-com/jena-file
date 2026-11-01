@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import JenaFileKit
 
 final class QuickConnectTests: XCTestCase {
@@ -45,5 +46,26 @@ final class TerminalLocaleTests: XCTestCase {
         XCTAssertEqual(TerminalLocale.lang(for: Locale(identifier: "ko_KR")), "ko_KR.UTF-8")
         XCTAssertEqual(TerminalLocale.lang(for: Locale(identifier: "en_US")), "en_US.UTF-8")
         XCTAssertEqual(TerminalLocale.lang(for: Locale(identifier: "ko")), "en_US.UTF-8")
+    }
+}
+
+final class DropPathsTests: XCTestCase {
+    private func board() -> NSPasteboard {
+        let pb = NSPasteboard(name: .init("jenafile.test.\(UUID().uuidString)"))
+        pb.clearContents()
+        return pb
+    }
+
+    /// The bug: dragging remote rows (strings only) inserted nothing.
+    func testRemoteRowsArriveAsStrings() {
+        let pb = board()
+        pb.writeObjects(["/home/jena/.bashrc" as NSString, "/home/jena/my file" as NSString])
+        XCTAssertEqual(DropPaths.read(pb), ["/home/jena/.bashrc", "/home/jena/my file"])
+    }
+
+    func testFinderFilesArriveAsFileURLs() {
+        let pb = board()
+        pb.writeObjects([URL(fileURLWithPath: "/tmp/a b.txt") as NSURL])
+        XCTAssertEqual(DropPaths.read(pb), ["/tmp/a b.txt"])
     }
 }

@@ -238,13 +238,7 @@ final class TerminalDropHost: NSView {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let pb = sender.draggingPasteboard
-        var paths: [String] = []
-        if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] {
-            paths = urls.map(\.path)
-        } else if let text = pb.string(forType: .string) {
-            paths = text.split(separator: "\n").map(String.init)
-        }
+        let paths = DropPaths.read(sender.draggingPasteboard)
         guard !paths.isEmpty else { return false }
         onDropText?(paths.map(ShellQuote.quote).joined(separator: " ") + " ")
         return true
