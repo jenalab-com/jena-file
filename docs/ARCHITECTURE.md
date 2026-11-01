@@ -122,7 +122,9 @@ Idle → Connecting{step} → AwaitingPrompt{prompt_id} → Ready
 
 - SFTP와 **같은 SSH 세션**에 셸 채널(PTY `xterm-256color`, 창 크기)을 연다. 탭 하나 = 채널 하나.
 - 출력: 핵심이 채널 데이터를 모아 **터미널 전용 콜백**(`TerminalSink.on_output(terminal_id, bytes)`)으로 보낸다. 일반 이벤트와 섞지 않는 이유는 양이 많기 때문(16ms 단위로 묶음).
-- 입력: Swift `TerminalView`의 바이트 → `core.terminal_write(id, bytes)`. 창 크기 변경 → `terminal_resize(id, cols, rows)` → `window_change`.
+- 입력: Swift `TerminalView`의 바이트 → `core.terminal_write(id, bytes)`(**동기 호출** — Swift `Task`로 보내면 키 입력 순서가 뒤바뀔 수 있음). 창 크기 변경 → `terminal_resize(id, cols, rows)` → `window_change`.
+- 채널을 여는 건 연결 액터지만, 열린 뒤 입력·출력은 **터미널별 작업 두 개**(입력·출력)가 채널 반쪽씩을 가진다. 느린 SFTP 목록 뒤에 키 입력이 줄 서지 않게 하려는 것(ADR-003의 예외).
+- 출력은 4ms 동안 모아서(최대 64KB) 한 번에 보낸다. 시작 폴더는 SSH에 해당 기능이 없어 `cd '<경로>' && clear`를 입력해 준다.
 - **SwiftTerm은 jenalab 포크를 SwiftPM 의존성으로** 쓴다(조합 중 커서 가림 수정 — UniFFI 스파이크 보고서). 수정은 원 저장소에 PR. 원본이 받아들이면 포크를 버리고 원본으로 돌아간다.
 - 터미널 창 포커스 순서: 앱 활성화 → 창 키 → 다음 실행 주기에 포커스 + `inputContext.activate()`(한글 첫 입력 스파이크 교훈).
 
@@ -175,7 +177,7 @@ Q1·Q2는 2026-11-01 추천안으로 확정(ADR-006, ADR-009).
 |---|---|---|
 | **M0 뼈대** ✅ | 저장소 구성(§2), `build-core.sh`, 빈 AppKit 창이 core 버전 문자열을 표시, `tests/docker` 이전 | `make app` 한 번으로 창이 뜸 — **완료 2026-11-01** |
 | **M1 직접 SFTP** ✅ | 연결 액터·상태 기계, 호스트 키/비밀번호 묻기(§5), 오른쪽 원격 파일 창 목록·폴더 이동 | AC-1 중 "목록" 부분, AC-6(호스트 키 바뀜 차단) — **완료 2026-11-01** (core 단위 7 + Docker 통합 5 + Swift 6 시험) |
-| **M2 터미널** | 같은 세션 PTY 탭, SwiftTerm 포크(커서 수정), 파일 창 ↔ 터미널 연동(FR-33) | AC-1 전체(한 번 접속 → 목록 + 셸) |
+| **M2 터미널** ✅ | 같은 세션 PTY 탭, SwiftTerm 포크(커서 수정), 파일 창 ↔ 터미널 연동(FR-33) | AC-1 전체(한 번 접속 → 목록 + 셸) — **완료 2026-11-01** (포크 `jenalab-com/SwiftTerm` `v1.99.2-jenafile.1`) |
 | **M3 bastion** | 경유 연결 트리, bastion 터미널에서 [내부 서버 열기](FR-21), ssh 명령 붙여넣기(FR-09), 비밀번호 만료 안내(FR-03b) | AC-2·3·4 — **초기 의도 해결 시점** |
 | **M4 전송** | 대기열·작업자·드래그 앤 드롭·진행률·덮어쓰기·이어받기·재시작 복원 | AC-5, 처리량 회귀 시험 |
 | **M5 서버 관리** | 서버 관리자(S-02), 키체인 저장·갱신(FR-03a), 상태 로그 필터 | 저장된 서버 더블클릭으로 접속 |

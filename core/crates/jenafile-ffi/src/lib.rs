@@ -128,6 +128,24 @@ pub trait CoreListener: Send + Sync {
     fn on_event(&self, event: CoreEvent);
 }
 
+/// One per terminal tab, implemented in Swift. Called on tokio threads.
+#[uniffi::export(foreign)]
+pub trait TerminalSink: Send + Sync {
+    fn on_output(&self, data: Vec<u8>);
+    fn on_closed(&self, exit_status: Option<u32>);
+}
+
+struct TerminalBridge(Arc<dyn TerminalSink>);
+
+impl jc::TerminalSink for TerminalBridge {
+    fn on_output(&self, data: Vec<u8>) {
+        self.0.on_output(data)
+    }
+    fn on_closed(&self, exit_status: Option<u32>) {
+        self.0.on_closed(exit_status)
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct Core {
     manager: jc::ConnectionManager,
@@ -162,6 +180,31 @@ impl Core {
 
     pub async fn disconnect(&self, connection: u64) {
         self.manager.disconnect(connection).await
+    }
+
+    /// Opens a shell on the connection's SSH session. `start_dir`: cd there first.
+    pub async fn open_terminal(
+        &self,
+        connection: u64,
+        cols: u32,
+        rows: u32,
+        start_dir: Option<String>,
+        sink: Arc<dyn TerminalSink>,
+    ) -> Result<u64, CoreError> {
+        Ok(self.manager.open_terminal(connection, cols, rows, start_dir, Arc::new(TerminalBridge(sink))).await?)
+    }
+
+    /// Synchronous on purpose: keystrokes must keep the caller's order.
+    pub fn terminal_write(&self, terminal: u64, data: Vec<u8>) {
+        self.manager.terminal_write(terminal, data)
+    }
+
+    pub fn terminal_resize(&self, terminal: u64, cols: u32, rows: u32) {
+        self.manager.terminal_resize(terminal, cols, rows)
+    }
+
+    pub fn close_terminal(&self, terminal: u64) {
+        self.manager.close_terminal(terminal)
     }
 
     /// Returns false if the prompt was already answered or abandoned.

@@ -32,3 +32,10 @@ final class RemotePathTests: XCTestCase {
         XCTAssertEqual(Format.permissions(0o100640), "rw-r-----")
     }
 }
+
+final class ShellQuoteTests: XCTestCase {
+    func testQuotesSpacesAndApostrophes() {
+        XCTAssertEqual(ShellQuote.quote("/var/www"), "'/var/www'")
+        XCTAssertEqual(ShellQuote.quote("/tmp/it's here"), "'/tmp/it'\\''s here'")
+    }
+}

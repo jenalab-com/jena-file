@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::error::CoreError;
 use crate::events::{ConnectionId, ConnectionState, Event, EventSink, Hop, LogLevel, PromptAnswer, PromptId};
 use crate::prompt::PromptBroker;
-use crate::transport::{self, HopContext, KnownHosts, RemoteEntry, Session};
+use crate::transport::{self, HopContext, KnownHosts, RemoteEntry, Session, TerminalInput, TerminalSink};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint {
@@ -34,8 +34,17 @@ pub struct CoreConfig {
 enum Command {
     Home(oneshot::Sender<Result<String, CoreError>>),
     List(String, oneshot::Sender<Result<Vec<RemoteEntry>, CoreError>>),
+    OpenTerminal {
+        cols: u32,
+        rows: u32,
+        start_dir: Option<String>,
+        sink: Arc<dyn TerminalSink>,
+        reply: oneshot::Sender<Result<mpsc::UnboundedSender<TerminalInput>, CoreError>>,
+    },
     Close(oneshot::Sender<()>),
 }
+
+pub type TerminalId = u64;
 
 /// `None` while connecting (reserves a slot), `Some` once the actor runs.
 type Slots = Mutex<HashMap<ConnectionId, Option<mpsc::Sender<Command>>>>;
@@ -45,6 +54,9 @@ struct Inner {
     prompts: Arc<PromptBroker>,
     known_hosts: Arc<KnownHosts>,
     slots: Slots,
+    /// Terminal input goes straight to its channel task, not through the actor:
+    /// keystrokes must not wait behind a slow SFTP listing.
+    terminals: Mutex<HashMap<TerminalId, (ConnectionId, mpsc::UnboundedSender<TerminalInput>)>>,
     next_id: AtomicU64,
     max_connections: u32,
 }
@@ -77,6 +89,7 @@ impl ConnectionManager {
                 sink,
                 known_hosts: Arc::new(known_hosts),
                 slots: Mutex::new(HashMap::new()),
+                terminals: Mutex::new(HashMap::new()),
                 next_id: AtomicU64::new(1),
                 max_connections: config.max_connections,
             }),
@@ -146,6 +159,43 @@ impl ConnectionManager {
         }
     }
 
+    /// Opens a shell tab on the connection's SSH session (same login as SFTP).
+    pub async fn open_terminal(
+        &self,
+        id: ConnectionId,
+        cols: u32,
+        rows: u32,
+        start_dir: Option<String>,
+        sink: Arc<dyn TerminalSink>,
+    ) -> Result<TerminalId, CoreError> {
+        let (reply, rx) = oneshot::channel();
+        self.send(id, Command::OpenTerminal { cols, rows, start_dir, sink, reply }).await?;
+        let input = rx.await.map_err(|_| CoreError::NotConnected(id))??;
+        let terminal = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        self.inner.terminals.lock().unwrap().insert(terminal, (id, input));
+        Ok(terminal)
+    }
+
+    /// Keystrokes / paste. Synchronous so callers keep their order.
+    pub fn terminal_write(&self, terminal: TerminalId, data: Vec<u8>) {
+        self.terminal_send(terminal, TerminalInput::Data(data));
+    }
+
+    pub fn terminal_resize(&self, terminal: TerminalId, cols: u32, rows: u32) {
+        self.terminal_send(terminal, TerminalInput::Resize { cols, rows });
+    }
+
+    pub fn close_terminal(&self, terminal: TerminalId) {
+        self.terminal_send(terminal, TerminalInput::Close);
+        self.inner.terminals.lock().unwrap().remove(&terminal);
+    }
+
+    fn terminal_send(&self, terminal: TerminalId, input: TerminalInput) {
+        if let Some((_, tx)) = self.inner.terminals.lock().unwrap().get(&terminal) {
+            let _ = tx.send(input);
+        }
+    }
+
     /// Answer a prompt. Returns false if it was already answered or abandoned.
     pub fn respond(&self, prompt: PromptId, answer: PromptAnswer) -> bool {
         self.inner.prompts.respond(prompt, answer)
@@ -164,6 +214,9 @@ async fn run_actor(id: ConnectionId, session: Session, mut rx: mpsc::Receiver<Co
             cmd = rx.recv() => match cmd {
                 Some(Command::Home(reply)) => { let _ = reply.send(session.home(Hop::Target).await); }
                 Some(Command::List(path, reply)) => { let _ = reply.send(session.list(Hop::Target, &path).await); }
+                Some(Command::OpenTerminal { cols, rows, start_dir, sink, reply }) => {
+                    let _ = reply.send(session.open_terminal(Hop::Target, cols, rows, start_dir, sink).await);
+                }
                 Some(Command::Close(reply)) => {
                     session.close().await;
                     let _ = reply.send(());
@@ -179,6 +232,7 @@ async fn run_actor(id: ConnectionId, session: Session, mut rx: mpsc::Receiver<Co
         }
     };
     inner.slots.lock().unwrap().remove(&id);
+    inner.terminals.lock().unwrap().retain(|_, (conn, _)| *conn != id);
     if end == ConnectionState::Closed {
         inner.log(id, LogLevel::Info, "disconnected".into());
     }

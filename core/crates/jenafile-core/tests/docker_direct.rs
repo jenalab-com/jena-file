@@ -130,3 +130,68 @@ async fn connection_limit_and_unreachable_host() {
     let bad = Endpoint { port: 2299, ..endpoint() };
     assert!(matches!(m.connect(bad).await, Err(CoreError::Connect { hop: Hop::Target, .. })));
 }
+
+/// Collects terminal output for assertions.
+struct TermCapture {
+    out: Mutex<Vec<u8>>,
+    closed: Mutex<Option<Option<u32>>>,
+}
+
+impl TerminalSink for TermCapture {
+    fn on_output(&self, data: Vec<u8>) {
+        self.out.lock().unwrap().extend(data);
+    }
+    fn on_closed(&self, exit_status: Option<u32>) {
+        *self.closed.lock().unwrap() = Some(exit_status);
+    }
+}
+
+impl TermCapture {
+    async fn wait_for(&self, needle: &str) -> String {
+        for _ in 0..100 {
+            let text = String::from_utf8_lossy(&self.out.lock().unwrap()).to_string();
+            if text.contains(needle) {
+                return text;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("never saw {needle:?} in {:?}", String::from_utf8_lossy(&self.out.lock().unwrap()));
+    }
+}
+
+#[tokio::test]
+async fn terminal_on_same_session_as_sftp() {
+    let dir = tempfile::tempdir().unwrap();
+    let (m, _) = setup(dir.path(), PromptAnswer::Accept, &["jena-test"], 3);
+    let id = m.connect(endpoint()).await.unwrap();
+    let sink = Arc::new(TermCapture { out: Mutex::new(vec![]), closed: Mutex::new(None) });
+    let term = m.open_terminal(id, 100, 30, Some("/etc".into()), sink.clone()).await.unwrap();
+
+    // Started in the requested folder, PTY has the requested size.
+    m.terminal_write(term, b"pwd; stty size; echo marker-$((40+2))\n".to_vec());
+    let text = sink.wait_for("marker-42").await;
+    assert!(text.contains("/etc"), "{text}");
+    assert!(text.contains("30 100"), "{text}");
+
+    // SFTP keeps working while the shell is open.
+    assert!(m.list(id, "/etc".into()).await.unwrap().iter().any(|e| e.name == "passwd"));
+
+    // Resize reaches the server.
+    m.terminal_resize(term, 120, 40);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    m.terminal_write(term, b"stty size; echo resized-ok\n".to_vec());
+    assert!(sink.wait_for("resized-ok").await.contains("40 120"));
+
+    // UTF-8 (Korean) passes through untouched.
+    m.terminal_write(term, "echo 한글-확인\n".as_bytes().to_vec());
+    sink.wait_for("한글-확인").await;
+
+    // Exit status is reported.
+    m.terminal_write(term, b"exit 3\n".to_vec());
+    for _ in 0..100 {
+        if sink.closed.lock().unwrap().is_some() { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(*sink.closed.lock().unwrap(), Some(Some(3)));
+    m.disconnect(id).await;
+}

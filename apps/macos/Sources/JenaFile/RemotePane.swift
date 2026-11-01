@@ -12,6 +12,10 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let overlay = NSTextField(wrappingLabelWithString: "")
+    /// "여기서 터미널 열기" (FR-33): folder to cd into.
+    var onOpenTerminal: ((String) -> Void)?
+    /// "경로를 터미널에 넣기": shell-quoted paths.
+    var onInsertPaths: (([String]) -> Void)?
 
     init(browser: RemoteBrowser) {
         self.browser = browser
@@ -42,6 +46,9 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.doubleAction = #selector(openSelected)
         table.target = self
         table.usesAlternatingRowBackgroundColors = true
+        table.allowsMultipleSelection = true
+        table.setDraggingSourceOperationMask(.copy, forLocal: true)
+        table.menu = contextMenu()
         table.style = .plain
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -112,7 +119,40 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         Task { await browser.open(p) }
     }
 
+    // MARK: context menu
+
+    private func contextMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "여기서 터미널 열기", action: #selector(openTerminalHere), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "경로를 터미널에 넣기", action: #selector(insertPaths), keyEquivalent: "").target = self
+        return menu
+    }
+
+    /// Rows the menu acts on: the clicked row (plus selection if it is part of it).
+    private func targetRows() -> [Int] {
+        let clicked = table.clickedRow
+        if clicked >= 0, !table.selectedRowIndexes.contains(clicked) { return [clicked] }
+        return Array(table.selectedRowIndexes)
+    }
+
+    @objc private func openTerminalHere() {
+        guard browser.connection != nil else { return }
+        let folder = targetRows().map { browser.entries[$0] }.first { $0.isDir }
+        onOpenTerminal?(folder.map { RemotePath.join(browser.path, $0.name) } ?? browser.path)
+    }
+
+    @objc private func insertPaths() {
+        let rows = targetRows()
+        let paths = rows.isEmpty ? [browser.path] : rows.map { RemotePath.join(browser.path, browser.entries[$0].name) }
+        onInsertPaths?(paths)
+    }
+
     // MARK: table
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard row < browser.entries.count else { return nil }
+        return RemotePath.join(browser.path, browser.entries[row].name) as NSString
+    }
 
     func numberOfRows(in tableView: NSTableView) -> Int { browser.entries.count }
 

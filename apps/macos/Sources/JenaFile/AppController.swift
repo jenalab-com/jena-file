@@ -12,6 +12,7 @@ final class AppController: CoreEventHandler {
     private let log = LogPane()
     private let status = NSTextField(labelWithString: "")
     private let remote: RemoteBrowser
+    private let terminals: TerminalPane
     private var prompts: PromptPresenter!
     private var connection: UInt64?
     private var target: QuickConnectInput?
@@ -21,8 +22,14 @@ final class AppController: CoreEventHandler {
         bridge = CoreBridge()
         core = Core(dataDir: try AppPaths.dataDirectory().path, userKnownHosts: AppPaths.userKnownHosts, listener: bridge)
         remote = RemoteBrowser(core: core)
+        terminals = TerminalPane(core: core)
+        let remotePane = RemotePane(browser: remote)
         window = MainWindow.make(MainWindowParts(
-            quickConnect: quickConnect, log: log, remote: RemotePane(browser: remote), status: status))
+            quickConnect: quickConnect, log: log, remote: remotePane, terminal: terminals, status: status))
+        remotePane.onOpenTerminal = { [terminals] dir in terminals.open(startDir: dir) }
+        remotePane.onInsertPaths = { [terminals] paths in
+            terminals.insert(paths.map(ShellQuote.quote).joined(separator: " ") + " ")
+        }
         prompts = PromptPresenter(window: window) { [core] id, answer in _ = core.respond(prompt: id, answer: answer) }
         bridge.handler = self
         quickConnect.onSubmit = { [weak self] in self?.connectOrDisconnect() }
@@ -65,6 +72,7 @@ final class AppController: CoreEventHandler {
                 connection = id
                 busy = false
                 refreshBar()
+                terminals.connected(id, title: input.display)   // AC-1: list + shell from one login
                 await remote.attach(id)
             } catch {
                 busy = false
@@ -100,6 +108,7 @@ final class AppController: CoreEventHandler {
                     connection = nil
                     busy = false
                     remote.detach()
+                    terminals.disconnected()
                     refreshBar()
                 }
                 updateStatus()

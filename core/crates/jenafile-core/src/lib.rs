@@ -7,13 +7,13 @@ mod events;
 mod prompt;
 mod transport;
 
-pub use connection::{ConnectionManager, CoreConfig, Endpoint};
+pub use connection::{ConnectionManager, CoreConfig, Endpoint, TerminalId};
 pub use error::CoreError;
 pub use events::{
     ConnectStep, ConnectionId, ConnectionState, Event, EventSink, HostKeyInfo, Hop, InteractivePrompt,
     LogLevel, PromptAnswer, PromptId, PromptKind,
 };
-pub use transport::RemoteEntry;
+pub use transport::{RemoteEntry, TerminalSink};
 
 /// Core library version, shown in the app so a stale xcframework is easy to spot.
 pub fn version() -> &'static str {

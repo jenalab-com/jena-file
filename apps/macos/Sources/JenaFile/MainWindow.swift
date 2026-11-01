@@ -6,6 +6,7 @@ struct MainWindowParts {
     let quickConnect: NSView
     let log: NSView
     let remote: NSView
+    let terminal: NSView
     let status: NSTextField
 }
 
@@ -23,7 +24,7 @@ enum MainWindow {
         let quickConnect = parts.quickConnect
         let top = horizontalSplit(boxed(parts.log), placeholder("전송 상태 (M4)"))
         let middle = horizontalSplit(placeholder("로컬 (M4)"), boxed(parts.remote))
-        let terminal = placeholder("터미널 (M2)")
+        let terminal = boxed(parts.terminal)
 
         let rows = NSSplitView()
         rows.isVertical = false
