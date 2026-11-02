@@ -58,10 +58,10 @@ final class PromptPresenter {
 
     private func makeAlert(_ kind: PromptKind, hop: Hop) -> (NSAlert, (NSApplication.ModalResponse) -> PromptAnswer) {
         let alert = NSAlert()
-        let side = hop == .bastion ? "bastion " : ""
+        let side = hop == .bastion ? L("경유 서버") + " " : ""
         switch kind {
         case .hostKeyUnknown(let host, let port, let key):
-            alert.messageText = L("처음 접속하는 %@예요", "\(side.isEmpty ? L("서버") : "bastion")")
+            alert.messageText = L("처음 접속하는 %@예요", "\(side.isEmpty ? L("서버") : L("경유 서버"))")
             alert.informativeText = L("%@의 호스트 키를 확인해 주세요.", "\(hostLabel(host, port))")
                 + "\n\n\(key.algorithm)\n\(key.fingerprint)\n\n"
                 + L("서버 관리자에게 받은 지문과 같다면 신뢰하고 접속하세요.")

@@ -15,6 +15,7 @@ app: core
 	@rm -rf $(BUNDLE) && mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	@cp $(MAC_DIR)/.build/release/$(APP_NAME) $(BUNDLE)/Contents/MacOS/
 	@cp $(MAC_DIR)/Resources/Info.plist $(BUNDLE)/Contents/
+	@cp $(MAC_DIR)/Resources/JenaFile.icns $(BUNDLE)/Contents/Resources/
 	@codesign -s - --force $(BUNDLE) >/dev/null 2>&1
 	@echo "✓ 빌드 완료: $(BUNDLE)"
 

@@ -1,6 +1,6 @@
 import JenaFileCore
 
-/// Korean, user-facing text for core errors. Says which side failed (bastion / server).
+/// Korean, user-facing text for core errors. Says which side failed (경유 서버 / 서버).
 public enum UserMessage {
     public static func describe(_ error: Error) -> String {
         guard let e = error as? CoreError else { return error.localizedDescription }
@@ -13,7 +13,7 @@ public enum UserMessage {
         case .Server(let hop, let message, let detail):
             return L("%@ 오류: %@", "\(where_(hop))", "\(message)") + (detail.map { L("\n서버 메시지: %@", "\($0)") } ?? "")
         case .TunnelFailed(let host, let port, let message):
-            return L("bastion까지는 연결됐지만 %@:%@에 닿지 못했어요 (%@)", "\(host)", "\(port)", "\(message)")
+            return L("경유 서버까지는 연결됐지만 %@:%@에 닿지 못했어요 (%@)", "\(host)", "\(port)", "\(message)")
         case .Local(let message): return L("이 Mac에서 문제가 생겼어요: %@", "\(message)")
         case .Cancelled: return L("접속을 취소했어요.")
         case .NotConnected: return L("연결이 끊겨 있어요.")
@@ -41,7 +41,7 @@ public enum UserMessage {
 
     private static func where_(_ hop: Hop) -> String {
         switch hop {
-        case .bastion: return "bastion"
+        case .bastion: return L("경유 서버")
         case .target: return L("서버")
         }
     }

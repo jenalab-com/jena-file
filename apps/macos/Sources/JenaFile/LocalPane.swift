@@ -8,6 +8,7 @@ final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let pathField = NSTextField()
     private let upButton = FileTable.button("arrow.up", L("상위 폴더"))
     private let homeButton = FileTable.button("house", L("홈 폴더"))
+    private let volumesButton = FileTable.button("externaldrive", L("외장 디스크"))
     private let refreshButton = FileTable.button("arrow.clockwise", L("새로 고침"))
     private let table = NSTableView()
     private let scroll = NSScrollView()
@@ -23,7 +24,7 @@ final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         pathField.placeholderString = L("로컬 경로")
         pathField.target = self
         pathField.action = #selector(goToTypedPath)
-        for (b, sel) in [(upButton, #selector(goUp)), (homeButton, #selector(goHome)), (refreshButton, #selector(refresh))] {
+        for (b, sel) in [(upButton, #selector(goUp)), (homeButton, #selector(goHome)), (volumesButton, #selector(showVolumes)), (refreshButton, #selector(refresh))] {
             b.target = self
             b.action = sel
         }
@@ -44,7 +45,7 @@ final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         }()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
-        FileTable.layout(in: self, bar: [upButton, homeButton, pathField, refreshButton], scroll: scroll, overlay: overlay)
+        FileTable.layout(in: self, bar: [upButton, homeButton, volumesButton, pathField, refreshButton], scroll: scroll, overlay: overlay)
         browser.onChange = { [weak self] in self?.render() }
         browser.refresh()
     }
@@ -87,6 +88,26 @@ final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     @objc private func goUp() { browser.goUp() }
     @objc private func goHome() { browser.open(FileManager.default.homeDirectoryForCurrentUser.path) }
     @objc private func refresh() { browser.refresh() }
+
+    /// Mounted drives as a menu under the button, like Finder's Locations.
+    @objc private func showVolumes() {
+        let m = NSMenu()
+        let volumes = LocalBrowser.volumes()
+        for url in volumes {
+            let item = m.addItem(withTitle: FileManager.default.displayName(atPath: url.path),
+                                 action: #selector(openVolume(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = url.path
+            item.image = NSWorkspace.shared.icon(forFile: url.path)
+            item.image?.size = NSSize(width: 16, height: 16)
+        }
+        if volumes.isEmpty { m.addItem(withTitle: L("연결된 외장 디스크가 없어요"), action: nil, keyEquivalent: "").isEnabled = false }
+        m.popUp(positioning: nil, at: NSPoint(x: 0, y: volumesButton.bounds.height + 4), in: volumesButton)
+    }
+
+    @objc private func openVolume(_ sender: NSMenuItem) {
+        if let path = sender.representedObject as? String { browser.open(path) }
+    }
     @objc private func goToTypedPath() { browser.open(pathField.stringValue) }
 
     var currentPath: String { browser.path }

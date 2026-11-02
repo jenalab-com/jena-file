@@ -23,6 +23,16 @@ bastion 뒤 서버에 파일을 올리려면 지금은 터미널에서 `ssh -L`�
 
 필요: macOS 13+, Xcode(Swift 6), Rust(rustup).
 
+처음 한 번, `make run` 전에 Rust를 설치한다(`cargo: command not found`가 나면 이 단계가 빠진 것):
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # 기본 옵션으로 설치
+. "$HOME/.cargo/env"                                             # 또는 터미널 새로 열기
+cargo --version                                                  # 설치 확인
+```
+
+`brew install rust`가 아니라 rustup을 쓴다. 빌드 스크립트가 `~/.cargo/env`를 직접 불러오므로 PATH 설정 전이어도 동작한다. 첫 빌드는 의존성 컴파일로 몇 분 걸린다.
+
 ```sh
 make run        # Rust 핵심 → xcframework → 앱 빌드(build/JenaFile.app) → 실행
 make test       # cargo test + swift test

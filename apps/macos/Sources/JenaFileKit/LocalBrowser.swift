@@ -51,12 +51,27 @@ public final class LocalBrowser {
         (path as NSString).appendingPathComponent(entry.name)
     }
 
+    /// External drives, network shares and disk images the user can open — what
+    /// Finder's sidebar lists under Locations. The startup disk is reached via "/".
+    public static func volumes() -> [URL] {
+        let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeIsBrowsableKey],
+                                                         options: [.skipHiddenVolumes]) ?? []
+        return urls.filter { u in
+            u.path.hasPrefix("/Volumes/")
+                && (try? u.resourceValues(forKeys: [.volumeIsBrowsableKey]))?.volumeIsBrowsable != false
+        }
+    }
+
     /// Folders first, then name (case-insensitive) — same order as the remote pane.
     public static func list(_ dir: URL, showsHidden: Bool = false) throws -> [LocalEntry] {
-        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
-        let urls = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys,
-                                                               options: showsHidden ? [] : [.skipsHiddenFiles])
-        return urls.map { u in
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isHiddenKey]
+        let urls = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys)
+        return urls.filter { u in
+            // /Volumes carries the hidden flag, but it is the way to external drives.
+            showsHidden || u.path == "/Volumes"
+                || !(u.lastPathComponent.hasPrefix(".") || (try? u.resourceValues(forKeys: [.isHiddenKey]))?.isHidden == true)
+        }
+        .map { u in
             let v = try? u.resourceValues(forKeys: Set(keys))
             return LocalEntry(name: u.lastPathComponent,
                               size: UInt64(v?.fileSize ?? 0),

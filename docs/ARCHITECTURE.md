@@ -110,6 +110,7 @@ Idle → Connecting{step} → AwaitingPrompt{prompt_id} → Ready
 | 호스트 키(새로 신뢰) | **앱 전용** `Application Support/jena-file/known_hosts` | 핵심 |
 | 전송 대기열(미완료) | `Application Support/jena-file/pending-transfers.json` — 경로 키(`대상 via bastion`)로 같은 서버에 다시 접속하면 이어서 할지 묻는다 | Swift(`PendingStore`) |
 | 화면 상태(창 크기·분할 비율·보기 메뉴), 설정(동시 전송 수·같은 이름 기본 동작·로컬 시작 폴더·숨김 파일) | `UserDefaults` | Swift(`AppSettings`) |
+| 서버 관리 그룹 이름(서버가 아직 없는 빈 그룹 포함). 서버가 어느 그룹인지는 프로필의 `group` | `UserDefaults`(`serverGroups`) | Swift(`AppSettings`, `ServerTree`) |
 
 - 키체인 계정 이름 = 프로필 id(bastion을 직접 입력한 경우 `<id>#bastion`). 다른 프로그램이 만든 항목은 macOS가 접근 허용을 묻는다. 개발 빌드는 빌드마다 서명이 바뀌어 다시 물을 수 있고, 정식 서명판은 처음 한 번.
 - 개발용 환경 변수: `JENAFILE_DATA_DIR`(앱 데이터 폴더 바꿔 끼우기), `JENAFILE_DEV_*`(자동 접속·창 열기·업로드) — 화면 확인 자동화용, 사용자 기능 아님.

@@ -19,10 +19,10 @@ final class QuickConnectBar: NSView {
         user.placeholderString = L("사용자")
         password.placeholderString = L("비밀번호")
         port.placeholderString = "22"
-        bastion.placeholderString = "bastion: user@host:port"
+        bastion.placeholderString = L("경유 서버: user@host:port")
         via.target = self
         via.action = #selector(viaToggled)
-        via.toolTip = L("bastion(점프 서버)를 거쳐 접속해요. 필요할 때만 켜세요.")
+        via.toolTip = L("경유 서버(점프 호스트)를 거쳐 접속해요. 필요할 때만 켜세요.")
         for field in [host, user, password, port, bastion] {
             field.target = self
             field.action = #selector(submit)

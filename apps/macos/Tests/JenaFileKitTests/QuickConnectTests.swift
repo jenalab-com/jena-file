@@ -125,4 +125,12 @@ final class LocalBrowserTests: XCTestCase {
         b.goUp()
         XCTAssertEqual(b.path, root.standardizedFileURL.path)
     }
+
+    /// /Volumes has the hidden flag; it must still show at "/" so external drives are reachable.
+    func testRootShowsVolumesButNotOtherHiddenFolders() throws {
+        let names = try LocalBrowser.list(URL(fileURLWithPath: "/")).map(\.name)
+        XCTAssertTrue(names.contains("Volumes"))
+        XCTAssertFalse(names.contains("private"), "other hidden-flag folders stay hidden")
+        XCTAssertTrue(LocalBrowser.volumes().allSatisfy { $0.path.hasPrefix("/Volumes/") })
+    }
 }

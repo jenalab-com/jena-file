@@ -150,7 +150,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         var bastionTitle: String?
         if let text = quickConnect.bastionText {
             guard let b = QuickConnectInput.parse(host: text, user: "", port: "") else {
-                log.append(L("bastion을 user@host:port 형식으로 입력해 주세요"), tone: .warn)
+                log.append(L("경유 서버를 user@host:port 형식으로 입력해 주세요"), tone: .warn)
                 return
             }
             via = .endpoint(endpoint: b.endpoint)
@@ -170,7 +170,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         if !open.isEmpty { disconnectAll(nil) }
         let all = (try? core.listProfiles()) ?? []
         guard let route = ProfileRoute(p, all: all) else {
-            log.append(L("\"%@\"의 bastion 서버를 찾을 수 없어요. 서버 관리에서 경유 설정을 확인해 주세요.", "\(p.name)"), tone: .error)
+            log.append(L("\"%@\"의 경유 서버를 찾을 수 없어요. 서버 관리에서 경유 서버 설정을 확인해 주세요.", "\(p.name)"), tone: .error)
             return
         }
         attempt = Attempt(profile: p, targetAccount: route.targetAccount, bastionAccount: route.bastionAccount)
@@ -194,8 +194,8 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         busy = true
         refresh()
         let routed = bastionTitle != nil || viaConnection(via) != nil
-        let title = baseTitle + (routed ? " ⇢bastion" : "")
-        let route = bastionTitle.map { L(" (bastion %@ 경유)", "\($0)") } ?? viaConnection(via).flatMap { open[$0] }.map { L(" (%@ 경유)", "\($0)") } ?? ""
+        let title = baseTitle + (routed ? L(" ⇢경유") : "")
+        let route = (bastionTitle ?? viaConnection(via).flatMap { open[$0] }).map { L(" (%@ 경유)", "\($0)") } ?? ""
         log.append(L("%@%@ 연결 중…", "\(baseTitle)", "\(route)"))
         let viaKey: String? = switch via {
         case .endpoint(let e): RouteKey.of(e)
@@ -210,7 +210,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
                     open[b] = bastionTitle
                     keys[b] = viaKey
                     secrets[b] = prompts.used[.bastion]
-                    terminals.connected(b, title: "bastion \(bastionTitle)", makeActive: false)
+                    terminals.connected(b, title: L("%@ (경유 서버)", bastionTitle), makeActive: false)
                 }
                 open[c.id] = title
                 keys[c.id] = key
@@ -251,7 +251,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
     private func offerToSaveTypedPasswords() {
         let pending: [(account: String, password: String, label: String)] = [
             (attempt.targetAccount, prompts.typed[.target], L("서버")),
-            (attempt.bastionAccount, prompts.typed[.bastion], "bastion"),
+            (attempt.bastionAccount, prompts.typed[.bastion], L("경유 서버")),
         ].compactMap { a, p, l in
             guard let a, let p, !p.isEmpty, keychain.read(a) != p else { return nil }
             return (a, p, l)
@@ -414,7 +414,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
     private func askInternalServer(via: UInt64) {
         let alert = NSAlert()
         alert.messageText = L("내부 서버 열기")
-        alert.informativeText = L("%@를 거쳐 접속해요. bastion 비밀번호는 다시 묻지 않아요.", "\(open[via] ?? L("이 서버"))")
+        alert.informativeText = L("%@를 거쳐 접속해요. 경유 서버 비밀번호는 다시 묻지 않아요.", "\(open[via] ?? L("이 서버"))")
         let fields = NSStackView()
         fields.orientation = .vertical
         fields.alignment = .leading
@@ -566,7 +566,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
 
     @objc func showServerManager(_ sender: Any?) {
         if serverManager == nil {
-            serverManager = ServerManagerWindow(core: core, keychain: keychain) { [weak self] p in self?.connect(profile: p) }
+            serverManager = ServerManagerWindow(core: core, keychain: keychain, settings: settings) { [weak self] p in self?.connect(profile: p) }
         }
         serverManager?.showWindow(nil)
         serverManager?.window?.makeKeyAndOrderFront(nil)

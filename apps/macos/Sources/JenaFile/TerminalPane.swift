@@ -34,7 +34,7 @@ final class TerminalPane: NSView {
         }
         newTab.action = #selector(openNewTab)
         openInternal.action = #selector(openInternalServer)
-        openInternal.toolTip = L("이 셸의 서버를 bastion으로 삼아 내부 서버에 접속해요 (bastion 재인증 없음)")
+        openInternal.toolTip = L("이 셸의 서버를 경유 서버로 삼아 내부 서버에 접속해요 (다시 로그인하지 않아요)")
         empty.textColor = .tertiaryLabelColor
         tabs.tabViewType = .topTabsBezelBorder
 

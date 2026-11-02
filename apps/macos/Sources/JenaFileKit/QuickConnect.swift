@@ -54,7 +54,7 @@ public struct QuickConnectFill: Equatable {
             return b.user.map { "\($0)@\(h)" } ?? h
         }
         var parts: [String] = []
-        if let bastion { parts.append(L("bastion %@ 경유", "\(bastion)")) }
+        if let bastion { parts.append(L("%@ 경유", "\(bastion)")) }
         parts.append(L("서버 %@:%@", "\(t.host)", "\(t.port)"))
         if let p = parsed.droppedLocalPort { parts.append(L("로컬 포트 %@는 이제 필요 없어요", "\(p)")) }
         if t.user == nil { parts.append(L("서버 사용자 이름을 입력해 주세요")) }

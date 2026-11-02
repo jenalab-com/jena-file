@@ -35,8 +35,8 @@ public struct ProfileRoute {
 }
 
 public extension Profile {
-    static func blank() -> Profile {
-        Profile(id: "", name: "", group: "", host: "", port: 22, user: "", via: nil,
+    static func blank(group: String = "") -> Profile {
+        Profile(id: "", name: "", group: group, host: "", port: 22, user: "", via: nil,
                 remoteDir: nil, localDir: nil, savePassword: true)
     }
 

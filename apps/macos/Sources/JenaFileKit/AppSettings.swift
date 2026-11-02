@@ -73,6 +73,12 @@ public final class AppSettings {
         set { d.set(newValue, forKey: "showTerminal") }
     }
 
+    /// 서버 관리 groups the user made, so a group stays while it has no servers yet.
+    public var serverGroups: [String] {
+        get { d.stringArray(forKey: "serverGroups") ?? [] }
+        set { d.set(newValue, forKey: "serverGroups") }
+    }
+
     public var logErrorsOnly: Bool {
         get { d.bool(forKey: "logErrorsOnly") }
         set { d.set(newValue, forKey: "logErrorsOnly") }
