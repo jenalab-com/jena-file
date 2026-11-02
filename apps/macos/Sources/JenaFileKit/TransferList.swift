@@ -33,7 +33,7 @@ public final class TransferList {
     }
 
     public var hasActive: Bool {
-        items.contains { $0.state == .queued || $0.state == .running }
+        items.contains { $0.state == .queued || $0.state == .running || $0.state == .waiting }
     }
 
     public var summary: String {
@@ -41,8 +41,8 @@ public final class TransferList {
         let queued = items.filter { $0.state == .queued }.count
         let done = items.filter { $0.state == .done }.count
         let failed = items.filter { if case .failed = $0.state { true } else { false } }.count
-        var parts = ["진행 \(running)", "대기 \(queued)", "완료 \(done)"]
-        if failed > 0 { parts.append("실패 \(failed)") }
+        var parts = [L("진행 %@", "\(running)"), L("대기 %@", "\(queued)"), L("완료 %@", "\(done)")]
+        if failed > 0 { parts.append(L("실패 %@", "\(failed)")) }
         return parts.joined(separator: " · ")
     }
 }
@@ -61,13 +61,14 @@ public extension Format {
 
     static func state(_ s: TransferState) -> String {
         switch s {
-        case .queued: "대기"
-        case .running: "진행 중"
-        case .paused: "일시정지"
-        case .done: "완료"
-        case .skipped: "건너뜀"
-        case .cancelled: "취소됨"
-        case .failed(let message): "실패: \(message)"
+        case .queued: L("대기")
+        case .running: L("진행 중")
+        case .paused: L("일시정지")
+        case .waiting: L("연결 대기")
+        case .done: L("완료")
+        case .skipped: L("건너뜀")
+        case .cancelled: L("취소됨")
+        case .failed(let message): L("실패: %@", "\(message)")
         }
     }
 }

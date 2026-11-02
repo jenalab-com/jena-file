@@ -1,4 +1,5 @@
 import AppKit
+import JenaFileKit
 
 /// Shared look for the local and remote file tables.
 @MainActor
@@ -7,8 +8,8 @@ enum FileTable {
     static let remotePathsType = NSPasteboard.PasteboardType("com.jenalab.jenafile.remote-paths")
 
     static func addColumns(_ table: NSTableView, permissions: Bool) {
-        var cols: [(String, String, CGFloat)] = [("name", "이름", 240), ("size", "크기", 80), ("modified", "수정일", 130)]
-        if permissions { cols.append(("perm", "권한", 90)) }
+        var cols: [(String, String, CGFloat)] = [("name", L("이름"), 240), ("size", L("크기"), 80), ("modified", L("수정일"), 130)]
+        if permissions { cols.append(("perm", L("권한"), 90)) }
         for (id, title, width) in cols {
             let col = NSTableColumn(identifier: .init(id))
             col.title = title

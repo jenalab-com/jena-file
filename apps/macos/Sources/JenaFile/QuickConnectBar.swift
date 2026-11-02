@@ -8,21 +8,21 @@ final class QuickConnectBar: NSView {
     let user = NSTextField()
     let password = NSSecureTextField()
     let port = NSTextField()
-    let via = NSButton(checkboxWithTitle: "경유", target: nil, action: nil)
+    let via = NSButton(checkboxWithTitle: L("경유"), target: nil, action: nil)
     let bastion = NSTextField()
-    let button = NSButton(title: "접속", target: nil, action: nil)
+    let button = NSButton(title: L("접속"), target: nil, action: nil)
     var onSubmit: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        host.placeholderString = "호스트 (user@host:port도 가능)"
-        user.placeholderString = "사용자"
-        password.placeholderString = "비밀번호"
+        host.placeholderString = L("호스트 (user@host:port도 가능)")
+        user.placeholderString = L("사용자")
+        password.placeholderString = L("비밀번호")
         port.placeholderString = "22"
         bastion.placeholderString = "bastion: user@host:port"
         via.target = self
         via.action = #selector(viaToggled)
-        via.toolTip = "bastion(점프 서버)를 거쳐 접속해요. 필요할 때만 켜세요."
+        via.toolTip = L("bastion(점프 서버)를 거쳐 접속해요. 필요할 때만 켜세요.")
         for field in [host, user, password, port, bastion] {
             field.target = self
             field.action = #selector(submit)
@@ -33,7 +33,7 @@ final class QuickConnectBar: NSView {
         button.action = #selector(submit)
 
         let row = NSStackView(views: [
-            label("호스트"), host, label("사용자"), user, label("비밀번호"), password, label("포트"), port,
+            label(L("호스트")), host, label(L("사용자")), user, label(L("비밀번호")), password, label(L("포트")), port,
             via, bastion, button,
         ])
         row.spacing = 6
@@ -57,7 +57,7 @@ final class QuickConnectBar: NSView {
     private var editable = true
 
     func setConnected(_ connected: Bool, busy: Bool) {
-        button.title = connected ? "끊기" : "접속"
+        button.title = connected ? L("끊기") : L("접속")
         button.isEnabled = !busy
         editable = !connected && !busy
         for c in [host, user, password, port, via] as [NSControl] { c.isEnabled = editable }

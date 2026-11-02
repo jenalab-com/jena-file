@@ -9,10 +9,10 @@ public final class AppSettings {
 
         public var title: String {
             switch self {
-            case .ask: "매번 묻기"
-            case .overwrite: "덮어쓰기"
-            case .rename: "이름 바꿔 저장"
-            case .skip: "건너뛰기"
+            case .ask: L("매번 묻기")
+            case .overwrite: L("덮어쓰기")
+            case .rename: L("이름 바꿔 저장")
+            case .skip: L("건너뛰기")
             }
         }
 

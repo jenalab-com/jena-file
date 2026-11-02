@@ -182,34 +182,18 @@ impl ConnectionManager {
             }
             slots.insert(id, Slot { role, parent, commands: None });
         }
-        let route = parent.map(|_| " via bastion").unwrap_or("");
-        inner.log(id, hop, LogLevel::Info, format!("connecting to {}@{}:{}{route}", endpoint.user, endpoint.host, endpoint.port));
-        let ctx = HopContext {
-            connection: id,
-            hop,
-            host: endpoint.host.clone(),
-            port: endpoint.port,
-            user: endpoint.user.clone(),
-            prompts: inner.prompts.clone(),
-            known_hosts: inner.known_hosts.clone(),
-        };
-        let on_step = |step| inner.emit_state(id, ConnectionState::Connecting { step });
-        let result = match parent {
-            None => transport::connect_direct(ctx, with_sftp, on_step).await,
-            Some(p) => match self.tunnel(p, &endpoint).await {
-                Ok(tunnel) => transport::connect_via(ctx, tunnel, with_sftp, on_step).await,
-                Err(e) => Err(e),
-            },
-        };
-        match result {
+        let route = Route { endpoint, hop, parent, with_sftp };
+        let via = parent.map(|_| " via bastion").unwrap_or("");
+        let ep = &route.endpoint;
+        inner.log(id, hop, LogLevel::Info, format!("connecting to {}@{}:{}{via}", ep.user, ep.host, ep.port));
+        match establish(inner, id, &route).await {
             Ok(session) => {
                 let (tx, rx) = mpsc::channel(32);
                 if let Some(slot) = inner.slots.lock().unwrap().get_mut(&id) {
                     slot.commands = Some(tx);
                 }
-                tokio::spawn(run_actor(id, hop, session, rx, inner.clone()));
-                inner.log(id, hop, LogLevel::Info, if with_sftp { "connected, SFTP ready" } else { "connected" }.into());
-                inner.emit_state(id, ConnectionState::Ready);
+                ready(inner, id, &route, &session);
+                tokio::spawn(run_actor(id, route, session, rx, inner.clone()));
                 Ok(id)
             }
             Err(error) => {
@@ -219,12 +203,6 @@ impl ConnectionManager {
                 Err(error)
             }
         }
-    }
-
-    async fn tunnel(&self, bastion: ConnectionId, to: &Endpoint) -> Result<Tunnel, CoreError> {
-        let (reply, rx) = oneshot::channel();
-        self.send(bastion, Command::OpenTunnel { host: to.host.clone(), port: to.port, reply }).await?;
-        rx.await.map_err(|_| CoreError::NotConnected(bastion))?
     }
 
     pub async fn home(&self, id: ConnectionId) -> Result<String, CoreError> {
@@ -367,11 +345,83 @@ impl ConnectionManager {
     }
 }
 
-async fn run_actor(id: ConnectionId, hop: Hop, session: Session, mut rx: mpsc::Receiver<Command>, inner: Arc<Inner>) {
-    // Reconnect comes in M6; for now a dead session is reported and the slot freed.
-    // A child behind a dead bastion notices here too: its tunnel closes with it.
+/// How a connection was made, so it can be made again after a drop.
+#[derive(Clone)]
+struct Route {
+    endpoint: Endpoint,
+    hop: Hop,
+    parent: Option<ConnectionId>,
+    with_sftp: bool,
+}
+
+/// Retry delays after a drop (ARCHITECTURE §4.2): three tries, then give up.
+const RECONNECT_DELAYS: [Duration; 3] = [Duration::from_secs(1), Duration::from_secs(3), Duration::from_secs(9)];
+/// A child waits at most this long for its (possibly reconnecting) bastion.
+const TUNNEL_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Dial (directly or through the parent's tunnel), check the host key, log in.
+async fn establish(inner: &Arc<Inner>, id: ConnectionId, route: &Route) -> Result<Session, CoreError> {
+    let ep = &route.endpoint;
+    let ctx = HopContext {
+        connection: id,
+        hop: route.hop,
+        host: ep.host.clone(),
+        port: ep.port,
+        user: ep.user.clone(),
+        prompts: inner.prompts.clone(),
+        known_hosts: inner.known_hosts.clone(),
+    };
+    let on_step = |step| inner.emit_state(id, ConnectionState::Connecting { step });
+    match route.parent {
+        None => transport::connect_direct(ctx, route.with_sftp, on_step).await,
+        Some(p) => {
+            let tunnel = tunnel(inner, p, ep).await?;
+            transport::connect_via(ctx, tunnel, route.with_sftp, on_step).await
+        }
+    }
+}
+
+async fn tunnel(inner: &Inner, bastion: ConnectionId, to: &Endpoint) -> Result<Tunnel, CoreError> {
+    let (reply, rx) = oneshot::channel();
+    let cmd = Command::OpenTunnel { host: to.host.clone(), port: to.port, reply };
+    inner.sender(bastion)?.send(cmd).await.map_err(|_| CoreError::NotConnected(bastion))?;
+    tokio::time::timeout(TUNNEL_TIMEOUT, rx)
+        .await
+        .map_err(|_| CoreError::TunnelFailed { host: to.host.clone(), port: to.port, message: "bastion did not answer".into() })?
+        .map_err(|_| CoreError::NotConnected(bastion))?
+}
+
+fn ready(inner: &Inner, id: ConnectionId, route: &Route, session: &Session) {
+    let msg = if route.with_sftp { "connected, SFTP ready" } else { "connected" };
+    inner.log(id, route.hop, LogLevel::Info, msg.into());
+    inner.emit_state(id, ConnectionState::Ready);
+    if let Ok(files) = session.files(route.hop) {
+        inner.transfers.connection_ready(id, files);
+    }
+}
+
+/// Not worth retrying: the server said no, or the user did.
+fn is_final(e: &CoreError) -> bool {
+    matches!(
+        e,
+        CoreError::Auth { .. }
+            | CoreError::HostKeyRejected { .. }
+            | CoreError::HostKeyChanged { .. }
+            | CoreError::PasswordExpired { .. }
+            | CoreError::Cancelled
+    )
+}
+
+enum Served {
+    /// Closed on purpose (Close command, or the manager dropped us).
+    Closed,
+    /// The SSH session died underneath us.
+    Lost,
+}
+
+async fn serve(session: &Session, hop: Hop, rx: &mut mpsc::Receiver<Command>) -> Served {
     let mut liveness = tokio::time::interval(Duration::from_secs(2));
-    let end = loop {
+    loop {
         tokio::select! {
             cmd = rx.recv() => match cmd {
                 Some(Command::Home(reply)) => { let _ = reply.send(session.home(hop).await); }
@@ -386,14 +436,78 @@ async fn run_actor(id: ConnectionId, hop: Hop, session: Session, mut rx: mpsc::R
                 Some(Command::Close(reply)) => {
                     session.close().await;
                     let _ = reply.send(());
-                    break ConnectionState::Closed;
+                    return Served::Closed;
                 }
-                None => { session.close().await; break ConnectionState::Closed; }
+                None => { session.close().await; return Served::Closed; }
             },
-            _ = liveness.tick() => if session.is_closed() {
-                let error = CoreError::Connect { hop, message: "connection lost".into() };
-                inner.log(id, hop, LogLevel::Error, error.to_string());
-                break ConnectionState::Failed { error };
+            _ = liveness.tick() => if session.is_closed() { return Served::Lost; }
+        }
+    }
+}
+
+/// Answers commands that arrive while there is no session.
+fn refuse(cmd: Command, id: ConnectionId) {
+    let gone = || CoreError::NotConnected(id);
+    match cmd {
+        Command::Home(r) => { let _ = r.send(Err(gone())); }
+        Command::List(_, r) => { let _ = r.send(Err(gone())); }
+        Command::OpenTerminal { reply, .. } => { let _ = reply.send(Err(gone())); }
+        Command::OpenTunnel { reply, .. } => { let _ = reply.send(Err(gone())); }
+        Command::Files(r) => { let _ = r.send(Err(gone())); }
+        Command::Close(r) => { let _ = r.send(()); }
+    }
+}
+
+/// Tries the same route again. `Ok(None)` = the user closed it meanwhile.
+async fn reconnect(inner: &Arc<Inner>, id: ConnectionId, route: &Route, rx: &mut mpsc::Receiver<Command>) -> Result<Option<Session>, CoreError> {
+    let mut last = CoreError::Connect { hop: route.hop, message: "connection lost".into() };
+    for (n, delay) in RECONNECT_DELAYS.iter().enumerate() {
+        let attempt = n as u32 + 1;
+        inner.emit_state(id, ConnectionState::Reconnecting { attempt, max: RECONNECT_DELAYS.len() as u32 });
+        let wait = tokio::time::sleep(*delay);
+        tokio::pin!(wait);
+        loop {
+            tokio::select! {
+                _ = &mut wait => break,
+                cmd = rx.recv() => match cmd {
+                    Some(c @ Command::Close(_)) => { refuse(c, id); return Ok(None); }
+                    None => return Ok(None),
+                    Some(other) => refuse(other, id),
+                },
+            }
+        }
+        inner.log(id, route.hop, LogLevel::Warn, format!("reconnecting (try {attempt})"));
+        match establish(inner, id, route).await {
+            Ok(session) => return Ok(Some(session)),
+            Err(e) if is_final(&e) => return Err(e),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+async fn run_actor(id: ConnectionId, route: Route, session: Session, mut rx: mpsc::Receiver<Command>, inner: Arc<Inner>) {
+    let hop = route.hop;
+    let mut session = session;
+    let end = loop {
+        match serve(&session, hop, &mut rx).await {
+            Served::Closed => break ConnectionState::Closed,
+            Served::Lost => {
+                // Shells die with the session; transfers wait for the new one.
+                inner.terminals.lock().unwrap().retain(|_, (conn, _)| *conn != id);
+                inner.transfers.connection_lost(id);
+                inner.log(id, hop, LogLevel::Warn, "connection lost".into());
+                match reconnect(&inner, id, &route, &mut rx).await {
+                    Ok(Some(s)) => {
+                        session = s;
+                        ready(&inner, id, &route, &session);
+                    }
+                    Ok(None) => break ConnectionState::Closed,
+                    Err(error) => {
+                        inner.log(id, hop, LogLevel::Error, error.to_string());
+                        break ConnectionState::Failed { error };
+                    }
+                }
             }
         }
     };

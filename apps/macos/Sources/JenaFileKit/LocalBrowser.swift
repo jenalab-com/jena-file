@@ -35,7 +35,7 @@ public final class LocalBrowser {
             path = url.path
             state = .loaded
         } catch {
-            state = .failed("이 폴더를 열 수 없어요 (\(error.localizedDescription))")
+            state = .failed(L("이 폴더를 열 수 없어요 (%@)", "\(error.localizedDescription)"))
         }
         onChange?()
     }

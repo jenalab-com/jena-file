@@ -11,9 +11,9 @@ final class TerminalPane: NSView {
     private let core: Core
     private let tabs = NSTabView()
     private let header = NSTextField(labelWithString: "")
-    private let newTab = NSButton(title: "새 셸", target: nil, action: nil)
-    private let openInternal = NSButton(title: "내부 서버 열기…", target: nil, action: nil)
-    private let empty = NSTextField(labelWithString: "서버에 접속하면 여기서 셸을 쓸 수 있어요")
+    private let newTab = NSButton(title: L("새 셸"), target: nil, action: nil)
+    private let openInternal = NSButton(title: L("내부 서버 열기…"), target: nil, action: nil)
+    private let empty = NSTextField(labelWithString: L("서버에 접속하면 여기서 셸을 쓸 수 있어요"))
     /// Open connections and their tab titles. `active` gets new shells.
     private var titles: [UInt64: String] = [:]
     private(set) var active: UInt64?
@@ -34,7 +34,7 @@ final class TerminalPane: NSView {
         }
         newTab.action = #selector(openNewTab)
         openInternal.action = #selector(openInternalServer)
-        openInternal.toolTip = "이 셸의 서버를 bastion으로 삼아 내부 서버에 접속해요 (bastion 재인증 없음)"
+        openInternal.toolTip = L("이 셸의 서버를 bastion으로 삼아 내부 서버에 접속해요 (bastion 재인증 없음)")
         empty.textColor = .tertiaryLabelColor
         tabs.tabViewType = .topTabsBezelBorder
 
@@ -83,8 +83,14 @@ final class TerminalPane: NSView {
     func disconnected(_ id: UInt64) {
         titles[id] = nil
         if active == id { active = nil }
-        sessions.filter { $0.connection == id }.forEach { $0.session.markEnded("연결이 끊겼어요") }
+        sessions.filter { $0.connection == id }.forEach { $0.session.markEnded(L("연결이 끊겼어요")) }
         render()
+    }
+
+    /// The session came back: its old shells are gone, open a fresh one.
+    func reconnected(_ id: UInt64) {
+        sessions.filter { $0.connection == id }.forEach { $0.session.markEnded(L("연결이 끊겼어요")) }
+        open(on: id, startDir: nil)
     }
 
     func open(startDir: String?) {
@@ -133,7 +139,7 @@ final class TerminalPane: NSView {
 
     private func render() {
         let names = Set(titles.values)
-        header.stringValue = names.isEmpty ? "터미널" : "터미널 · " + names.sorted().joined(separator: ", ")
+        header.stringValue = names.isEmpty ? L("터미널") : L("터미널 · ") + names.sorted().joined(separator: ", ")
         newTab.isEnabled = !titles.isEmpty
         openInternal.isEnabled = !titles.isEmpty
         let hasTabs = !tabs.tabViewItems.isEmpty
@@ -169,7 +175,7 @@ final class TerminalSession: NSObject, TerminalViewDelegate {
         host.onDropText = { [weak self] text in self?.type(text); self?.focus() }
         output.view = view
         output.onClosed = { [weak self] status in
-            self?.markEnded(status.map { "셸이 종료됐어요 (exit \($0))" } ?? "셸이 종료됐어요")
+            self?.markEnded(status.map { L("셸이 종료됐어요 (exit %@)", "\($0)") } ?? L("셸이 종료됐어요"))
         }
     }
 

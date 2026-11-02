@@ -8,10 +8,10 @@ final class TransferPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     private let list: TransferList
     private let core: Core
     private let summary = NSTextField(labelWithString: "")
-    private let clear = NSButton(title: "완료 지우기", target: nil, action: nil)
+    private let clear = NSButton(title: L("완료 지우기"), target: nil, action: nil)
     private let table = NSTableView()
     private let scroll = NSScrollView()
-    private let empty = NSTextField(labelWithString: "전송할 파일을 파일 창 사이로 끌어다 놓으세요")
+    private let empty = NSTextField(labelWithString: L("전송할 파일을 파일 창 사이로 끌어다 놓으세요"))
 
     init(list: TransferList, core: Core) {
         self.list = list
@@ -25,8 +25,8 @@ final class TransferPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         clear.action = #selector(clearFinished)
         empty.textColor = .tertiaryLabelColor
 
-        for (id, title, width) in [("name", "파일", 190.0), ("progress", "진행", 120.0), ("speed", "속도", 80.0),
-                                   ("eta", "남은 시간", 70.0), ("state", "상태", 120.0)] {
+        for (id, title, width) in [("name", L("파일"), 190.0), ("progress", L("진행"), 120.0), ("speed", L("속도"), 80.0),
+                                   ("eta", L("남은 시간"), 70.0), ("state", L("상태"), 120.0)] {
             let col = NSTableColumn(identifier: .init(id))
             col.title = title
             col.width = width
@@ -68,7 +68,7 @@ final class TransferPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     required init?(coder: NSCoder) { fatalError() }
 
     private func render() {
-        summary.stringValue = list.items.isEmpty ? "전송" : "전송 · " + list.summary
+        summary.stringValue = list.items.isEmpty ? L("전송") : L("전송 · ") + list.summary
         empty.isHidden = !list.items.isEmpty
         clear.isEnabled = list.items.contains { $0.state == .done || $0.state == .skipped || $0.state == .cancelled }
         table.reloadData()
@@ -90,17 +90,17 @@ final class TransferPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let t = targets()
-        let running = t.filter { $0.state == .running || $0.state == .queued }
+        let running = t.filter { $0.state == .running || $0.state == .queued || $0.state == .waiting }
         let stopped = t.filter { if case .failed = $0.state { true } else { $0.state == .paused || $0.state == .cancelled } }
         if !running.isEmpty {
-            menu.addItem(withTitle: "일시정지", action: #selector(pause), keyEquivalent: "").target = self
-            menu.addItem(withTitle: "취소", action: #selector(cancel), keyEquivalent: "").target = self
+            menu.addItem(withTitle: L("일시정지"), action: #selector(pause), keyEquivalent: "").target = self
+            menu.addItem(withTitle: L("취소"), action: #selector(cancel), keyEquivalent: "").target = self
         }
         if !stopped.isEmpty {
-            menu.addItem(withTitle: "이어서 받기 / 다시 시도", action: #selector(resume), keyEquivalent: "").target = self
+            menu.addItem(withTitle: L("이어서 받기 / 다시 시도"), action: #selector(resume), keyEquivalent: "").target = self
         }
         if menu.items.isEmpty {
-            menu.addItem(withTitle: "완료 지우기", action: #selector(clearFinished), keyEquivalent: "").target = self
+            menu.addItem(withTitle: L("완료 지우기"), action: #selector(clearFinished), keyEquivalent: "").target = self
         }
     }
 
@@ -133,7 +133,7 @@ final class TransferPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
             cell.textField?.stringValue = name
             cell.toolTip = t.direction == .upload ? "\(t.localPath) → \(t.remotePath)" : "\(t.remotePath) → \(t.localPath)"
             cell.imageView?.image = NSImage(systemSymbolName: t.direction == .upload ? "arrow.up.circle" : "arrow.down.circle",
-                                            accessibilityDescription: t.direction == .upload ? "업로드" : "다운로드")
+                                            accessibilityDescription: t.direction == .upload ? L("업로드") : L("다운로드"))
             cell.imageView?.contentTintColor = t.direction == .upload ? .systemOrange : .systemGreen
         case "speed":
             cell.textField?.stringValue = t.state == .running ? Format.speed(t.bytesPerSec) : ""

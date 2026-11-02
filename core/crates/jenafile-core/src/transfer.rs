@@ -4,7 +4,7 @@
 //! Resume never trusts our own byte counter: it stats the destination and
 //! continues from its real size, so in-flight writes lost to an abort are redone.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -31,19 +31,23 @@ struct Batch {
 
 struct Item {
     info: TransferInfo,
-    files: Files,
     batch: Arc<Batch>,
     progress: Arc<AtomicU64>,
     /// Continue from the destination's size without asking (resume / retry).
     resume: bool,
     task: Option<tokio::task::AbortHandle>,
     last_sample: (Instant, u64),
+    /// When it last failed: a failure just before "connection lost" is the loss itself.
+    failed_at: Option<Instant>,
 }
 
 pub(crate) struct Transfers {
     sink: Arc<dyn EventSink>,
     prompts: Arc<PromptBroker>,
     items: Mutex<BTreeMap<TransferId, Item>>,
+    /// Current SFTP handle per connection. Replaced on reconnect, removed while lost,
+    /// so items never hold a dead session.
+    files: Mutex<HashMap<ConnectionId, Files>>,
     next_id: AtomicU64,
     ticking: AtomicBool,
     per_connection: std::sync::atomic::AtomicUsize,
@@ -63,6 +67,7 @@ impl Transfers {
             sink,
             prompts,
             items: Mutex::new(BTreeMap::new()),
+            files: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             ticking: AtomicBool::new(false),
             per_connection: std::sync::atomic::AtomicUsize::new(PER_CONNECTION),
@@ -83,6 +88,7 @@ impl Transfers {
         jobs: Vec<Job>,
         on_conflict: Option<ConflictAction>,
     ) -> Vec<TransferId> {
+        self.files.lock().unwrap().insert(connection, files);
         let batch = Arc::new(Batch { policy: Mutex::new(on_conflict) });
         let mut ids = Vec::new();
         {
@@ -103,12 +109,12 @@ impl Transfers {
                 self.sink.emit(Event::Transfer(info.clone()));
                 items.insert(id, Item {
                     info,
-                    files: files.clone(),
                     batch: batch.clone(),
                     progress: Arc::new(AtomicU64::new(0)),
                     resume: false,
                     task: None,
                     last_sample: (Instant::now(), 0),
+                    failed_at: None,
                 });
                 ids.push(id);
             }
@@ -131,7 +137,7 @@ impl Transfers {
         {
             let mut items = self.items.lock().unwrap();
             let Some(item) = items.get_mut(&id) else { return };
-            if !matches!(item.info.state, TransferState::Paused | TransferState::Failed { .. } | TransferState::Cancelled) {
+            if !matches!(item.info.state, TransferState::Paused | TransferState::Waiting | TransferState::Failed { .. } | TransferState::Cancelled) {
                 return;
             }
             item.resume = true;
@@ -148,10 +154,44 @@ impl Transfers {
         });
     }
 
-    /// The connection is gone: running and queued items fail (retry later).
+    /// The connection dropped and is reconnecting: unfinished items wait for it.
+    pub(crate) fn connection_lost(self: &Arc<Self>, connection: ConnectionId) {
+        self.files.lock().unwrap().remove(&connection);
+        let mut items = self.items.lock().unwrap();
+        for item in items.values_mut().filter(|i| i.info.connection == connection) {
+            let just_failed = matches!(item.info.state, TransferState::Failed { .. })
+                && item.failed_at.is_some_and(|t| t.elapsed() < Duration::from_secs(10));
+            if matches!(item.info.state, TransferState::Queued | TransferState::Running) || just_failed {
+                if let Some(task) = item.task.take() {
+                    task.abort();
+                }
+                item.info.transferred = item.progress.load(Ordering::Relaxed);
+                item.info.bytes_per_sec = 0;
+                item.info.state = TransferState::Waiting;
+                self.sink.emit(Event::Transfer(item.info.clone()));
+            }
+        }
+    }
+
+    /// Reconnected: waiting items continue from what the destination really has.
+    pub(crate) fn connection_ready(self: &Arc<Self>, connection: ConnectionId, files: Files) {
+        self.files.lock().unwrap().insert(connection, files);
+        {
+            let mut items = self.items.lock().unwrap();
+            for item in items.values_mut().filter(|i| i.info.connection == connection && i.info.state == TransferState::Waiting) {
+                item.resume = true;
+                item.info.state = TransferState::Queued;
+                self.sink.emit(Event::Transfer(item.info.clone()));
+            }
+        }
+        self.pump();
+    }
+
+    /// The connection is gone for good: unfinished items fail (retry needs a new connection).
     pub(crate) fn connection_closed(self: &Arc<Self>, connection: ConnectionId) {
+        self.files.lock().unwrap().remove(&connection);
         let ids: Vec<_> = self.items.lock().unwrap().iter()
-            .filter(|(_, i)| i.info.connection == connection && matches!(i.info.state, TransferState::Queued | TransferState::Running))
+            .filter(|(_, i)| i.info.connection == connection && matches!(i.info.state, TransferState::Queued | TransferState::Running | TransferState::Waiting))
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
@@ -167,7 +207,7 @@ impl Transfers {
         {
             let mut items = self.items.lock().unwrap();
             let Some(item) = items.get_mut(&id) else { return };
-            if !matches!(item.info.state, TransferState::Queued | TransferState::Running) {
+            if !matches!(item.info.state, TransferState::Queued | TransferState::Running | TransferState::Waiting) {
                 return;
             }
             if let Some(task) = item.task.take() {
@@ -184,6 +224,7 @@ impl Transfers {
     /// Start queued items while their connection has free slots.
     fn pump(self: &Arc<Self>) {
         let limit = self.per_connection.load(Ordering::Relaxed);
+        let files = self.files.lock().unwrap().clone();
         let mut items = self.items.lock().unwrap();
         let mut running: BTreeMap<ConnectionId, usize> = BTreeMap::new();
         for i in items.values().filter(|i| i.info.state == TransferState::Running) {
@@ -192,6 +233,7 @@ impl Transfers {
         let ready: Vec<TransferId> = items.iter().filter(|(_, i)| i.info.state == TransferState::Queued).map(|(id, _)| *id).collect();
         for id in ready {
             let item = items.get_mut(&id).unwrap();
+            let Some(conn_files) = files.get(&item.info.connection) else { continue }; // reconnecting
             let slot = running.entry(item.info.connection).or_default();
             if *slot >= limit {
                 continue;
@@ -207,7 +249,7 @@ impl Transfers {
                 local: PathBuf::from(&item.info.local_path),
                 remote: item.info.remote_path.clone(),
                 size: item.info.size,
-                files: item.files.clone(),
+                files: conn_files.clone(),
                 batch: item.batch.clone(),
                 progress: item.progress.clone(),
                 resume: std::mem::take(&mut item.resume),
@@ -241,6 +283,7 @@ impl Transfers {
                 Err(e) => {
                     item.info.transferred = item.progress.load(Ordering::Relaxed);
                     item.info.state = TransferState::Failed { message: e.to_string() };
+                    item.failed_at = Some(Instant::now());
                 }
             }
             self.sink.emit(Event::Transfer(item.info.clone()));
@@ -260,9 +303,13 @@ impl Transfers {
         };
         let action = match existing {
             None => ConflictAction::Overwrite,
-            Some((size, _)) if w.resume => if size <= w.size { ConflictAction::Resume } else { ConflictAction::Overwrite },
+            // Our own partial file (resume / retry / reconnect): continue it.
+            Some((size, _)) if w.resume && size <= w.size => ConflictAction::Resume,
             Some((size, modified)) => {
                 let policy = *w.batch.policy.lock().unwrap();
+                // "Resume" cannot apply to a destination bigger than the source: that is
+                // some other file, so ask instead of silently overwriting it.
+                let policy = policy.filter(|p| !(*p == ConflictAction::Resume && size > w.size));
                 match policy {
                     Some(p) => p,
                     None => {

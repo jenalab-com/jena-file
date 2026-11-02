@@ -17,6 +17,8 @@ pub enum TransferState {
     Queued,
     Running,
     Paused,
+    /// The connection dropped; continues by itself after it reconnects (AC-5).
+    Waiting,
     Done,
     Skipped,
     Cancelled,
@@ -75,6 +77,8 @@ pub enum ConnectStep {
 pub enum ConnectionState {
     Connecting { step: ConnectStep },
     Ready,
+    /// Lost; trying again on its own (ARCHITECTURE §4.2).
+    Reconnecting { attempt: u32, max: u32 },
     Failed { error: crate::CoreError },
     Closed,
 }

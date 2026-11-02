@@ -30,6 +30,16 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
     /// The connection shown in the remote pane.
     private var active: UInt64?
     private var busy = false
+    /// Passwords of open connections, so a reconnect does not ask again.
+    /// Memory only, dropped when the connection ends (ARCHITECTURE §6).
+    private var secrets: [UInt64: String] = [:]
+    /// Route key per open connection (FR-16: unfinished transfers find their server again).
+    private var keys: [UInt64: String] = [:]
+    private var reconnecting: Set<UInt64> = []
+    private let pendingStore: PendingStore
+    /// Unfinished transfers from the last run, not yet resumed or dropped.
+    private var restored: [PendingTransfer] = []
+    private var savePendingScheduled = false
 
     /// Where the passwords of the current attempt come from / go to (FR-03a).
     private struct Attempt {
@@ -42,6 +52,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
     init(dataDir: String) {
         bridge = CoreBridge()
         core = Core(dataDir: dataDir, userKnownHosts: AppPaths.userKnownHosts, listener: bridge)
+        pendingStore = PendingStore(dataDir: URL(fileURLWithPath: dataDir))
         remote = RemoteBrowser(core: core)
         local = LocalBrowser(path: settings.localFolder ?? FileManager.default.homeDirectoryForCurrentUser.path)
         terminals = TerminalPane(core: core)
@@ -57,6 +68,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         localPane.onDownloadHere = { [weak self] paths in self?.download(paths) }
         transferList.onFinished = { [weak self] t in self?.transferFinished(t) }
         prompts = PromptPresenter(window: window) { [core] id, answer in _ = core.respond(prompt: id, answer: answer) }
+        prompts.sessionSecret = { [weak self] id in self?.secrets[id] }
         bridge.handler = self
         quickConnect.onSubmit = { [weak self] in self?.submit() }
         terminals.onOpenInternal = { [weak self] via in self?.askInternalServer(via: via) }
@@ -70,6 +82,10 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         log.errorsOnly = settings.logErrorsOnly
         refresh()
         log.append("jena-file core \(CoreInfo.version)")
+        restored = pendingStore.load()
+        if !restored.isEmpty {
+            log.append(L("끝나지 않은 전송 %@개가 남아 있어요. 같은 서버에 접속하면 이어서 할지 물어볼게요.", "\(restored.count)"))
+        }
     }
 
     /// Dev convenience: JENAFILE_DEV_CONNECT=user@host:port, JENAFILE_DEV_PASSWORD,
@@ -116,7 +132,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         let typed = quickConnect.host.stringValue.trimmingCharacters(in: .whitespaces)
         if typed.hasPrefix("ssh ") {
             guard let parsed = parseSshCommand(text: typed), let fill = QuickConnectFill(parsed) else {
-                log.append("ssh 명령을 이해하지 못했어요. 예: ssh -L 2222:10.0.0.5:22 user@bastion", tone: .warn)
+                log.append(L("ssh 명령을 이해하지 못했어요. 예: ssh -L 2222:10.0.0.5:22 user@bastion"), tone: .warn)
                 return
             }
             quickConnect.apply(fill)
@@ -127,14 +143,14 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         guard let target = QuickConnectInput.parse(host: quickConnect.host.stringValue,
                                                     user: quickConnect.user.stringValue,
                                                     port: quickConnect.port.stringValue) else {
-            log.append("호스트와 사용자 이름을 입력해 주세요 (예: jena@example.com:22)", tone: .warn)
+            log.append(L("호스트와 사용자 이름을 입력해 주세요 (예: jena@example.com:22)"), tone: .warn)
             return
         }
         var via: Via?
         var bastionTitle: String?
         if let text = quickConnect.bastionText {
             guard let b = QuickConnectInput.parse(host: text, user: "", port: "") else {
-                log.append("bastion을 user@host:port 형식으로 입력해 주세요", tone: .warn)
+                log.append(L("bastion을 user@host:port 형식으로 입력해 주세요"), tone: .warn)
                 return
             }
             via = .endpoint(endpoint: b.endpoint)
@@ -154,7 +170,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         if !open.isEmpty { disconnectAll(nil) }
         let all = (try? core.listProfiles()) ?? []
         guard let route = ProfileRoute(p, all: all) else {
-            log.append("\"\(p.name)\"의 bastion 서버를 찾을 수 없어요. 서버 관리에서 경유 설정을 확인해 주세요.", tone: .error)
+            log.append(L("\"%@\"의 bastion 서버를 찾을 수 없어요. 서버 관리에서 경유 설정을 확인해 주세요.", "\(p.name)"), tone: .error)
             return
         }
         attempt = Attempt(profile: p, targetAccount: route.targetAccount, bastionAccount: route.bastionAccount)
@@ -179,31 +195,42 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         refresh()
         let routed = bastionTitle != nil || viaConnection(via) != nil
         let title = baseTitle + (routed ? " ⇢bastion" : "")
-        let route = bastionTitle.map { " (bastion \($0) 경유)" } ?? viaConnection(via).flatMap { open[$0] }.map { " (\($0) 경유)" } ?? ""
-        log.append("\(baseTitle)\(route) 연결 중…")
+        let route = bastionTitle.map { L(" (bastion %@ 경유)", "\($0)") } ?? viaConnection(via).flatMap { open[$0] }.map { L(" (%@ 경유)", "\($0)") } ?? ""
+        log.append(L("%@%@ 연결 중…", "\(baseTitle)", "\(route)"))
+        let viaKey: String? = switch via {
+        case .endpoint(let e): RouteKey.of(e)
+        case .connection(let id): keys[id]
+        case nil: nil
+        }
+        let key = RouteKey.of(target, viaKey: viaKey)
         Task {
             do {
                 let c = try await core.connect(endpoint: target, via: via, withSftp: withSftp)
                 if let b = c.bastion, let bastionTitle {
                     open[b] = bastionTitle
+                    keys[b] = viaKey
+                    secrets[b] = prompts.used[.bastion]
                     terminals.connected(b, title: "bastion \(bastionTitle)", makeActive: false)
                 }
                 open[c.id] = title
+                keys[c.id] = key
+                secrets[c.id] = prompts.used[.target]
                 active = c.id
                 busy = false
                 terminals.connected(c.id, title: title)       // AC-1/2: list + shell from one login
-                log.append("연결됐어요 · \(title)")
+                log.append(L("연결됐어요 · %@", "\(title)"))
                 refresh()
                 offerToSaveTypedPasswords()
                 if withSftp {
                     await remote.attach(c.id, startPath: startPath)
+                    offerRestore(key: key, connection: c.id)
                     // Dev only: JENAFILE_DEV_UPLOAD=/path/a:/path/b queues uploads after connecting.
                     if let dev = ProcessInfo.processInfo.environment["JENAFILE_DEV_UPLOAD"] {
                         upload(dev.split(separator: ":").map(String.init))
                     }
                 } else {
                     remote.detach()
-                    log.append("터미널에서 새 비밀번호로 바꾼 뒤, 끊고 다시 접속해 주세요.")
+                    log.append(L("터미널에서 새 비밀번호로 바꾼 뒤, 끊고 다시 접속해 주세요."))
                 }
             } catch let e as CoreError {
                 busy = false
@@ -223,7 +250,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
     /// FR-03a: the user typed a password that worked — offer to keep it in the Keychain.
     private func offerToSaveTypedPasswords() {
         let pending: [(account: String, password: String, label: String)] = [
-            (attempt.targetAccount, prompts.typed[.target], "서버"),
+            (attempt.targetAccount, prompts.typed[.target], L("서버")),
             (attempt.bastionAccount, prompts.typed[.bastion], "bastion"),
         ].compactMap { a, p, l in
             guard let a, let p, !p.isEmpty, keychain.read(a) != p else { return nil }
@@ -232,14 +259,80 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         guard !pending.isEmpty else { return }
         let alert = NSAlert()
         let hadSaved = pending.contains { keychain.read($0.account) != nil }
-        alert.messageText = hadSaved ? "저장된 비밀번호를 바꿀까요?" : "비밀번호를 저장할까요?"
+        alert.messageText = hadSaved ? L("저장된 비밀번호를 바꿀까요?") : L("비밀번호를 저장할까요?")
         alert.informativeText = pending.map(\.label).joined(separator: "·")
-            + " 비밀번호를 키체인에 저장해 두면 다음부터 묻지 않아요."
-        alert.addButton(withTitle: hadSaved ? "바꾸기" : "저장")
-        alert.addButton(withTitle: "그대로 두기")
+            + L(" 비밀번호를 키체인에 저장해 두면 다음부터 묻지 않아요.")
+        alert.addButton(withTitle: hadSaved ? L("바꾸기") : L("저장"))
+        alert.addButton(withTitle: L("그대로 두기"))
         alert.beginSheetModal(for: window) { [keychain] response in
             guard response == .alertFirstButtonReturn else { return }
             for p in pending { keychain.save(p.password, for: p.account) }
+        }
+    }
+
+    // MARK: FR-16 — unfinished transfers across restarts
+
+    /// Live unfinished transfers + restored ones not yet claimed, debounced.
+    private func schedulePendingSave() {
+        guard !savePendingScheduled else { return }
+        savePendingScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.savePendingScheduled = false
+            self?.savePending()
+        }
+    }
+
+    func savePending() {
+        let live = transferList.items.filter { PendingTransfer.unfinished($0.state) }.compactMap { t -> PendingTransfer? in
+            guard let key = keys[t.connection] else { return nil }
+            return PendingTransfer(key: key, upload: t.direction == .upload, local: t.localPath, remote: t.remotePath, size: t.size)
+        }
+        pendingStore.save(restored + live)
+    }
+
+    private func offerRestore(key: String, connection: UInt64) {
+        let mine = restored.filter { $0.key == key }
+        guard !mine.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = L("끝나지 않은 전송 %@개가 있어요", "\(mine.count)")
+        alert.informativeText = L("지난번에 이 서버로 보내다 만 파일이에요. 받다 만 지점부터 이어서 할까요?\n")
+            + mine.prefix(5).map { "· " + ($0.upload ? $0.remote : $0.local) }.joined(separator: "\n")
+            + (mine.count > 5 ? L("\n… 외 %@개", "\(mine.count - 5)") : "")
+        alert.addButton(withTitle: L("이어서 하기"))
+        alert.addButton(withTitle: L("나중에"))
+        alert.addButton(withTitle: L("버리기"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            switch response {
+            case .alertFirstButtonReturn:
+                self.restored.removeAll { $0.key == key }
+                self.resume(mine, on: connection)
+            case .alertThirdButtonReturn:
+                self.restored.removeAll { $0.key == key }
+                self.savePending()
+            default:
+                break
+            }
+        }
+    }
+
+    /// Re-queues them with "resume": a partial destination continues, a bigger one asks.
+    private func resume(_ items: [PendingTransfer], on connection: UInt64) {
+        let ups = Dictionary(grouping: items.filter(\.upload)) { RemotePath.parent($0.remote) }
+        let downs = Dictionary(grouping: items.filter { !$0.upload }) { ($0.local as NSString).deletingLastPathComponent }
+        Task {
+            do {
+                for (dir, group) in ups {
+                    _ = try await core.upload(connection: connection, localPaths: group.map(\.local), remoteDir: dir, onConflict: .resume)
+                }
+                for (dir, group) in downs {
+                    _ = try await core.download(connection: connection, remotePaths: group.map(\.remote), localDir: dir, onConflict: .resume)
+                }
+                log.append(L("끝나지 않은 전송 %@개를 이어서 하고 있어요", "\(items.count)"))
+            } catch {
+                log.append(UserMessage.describe(error), tone: .error)
+            }
+            savePending()
         }
     }
 
@@ -253,7 +346,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
     /// Local files / folders → the folder shown in the remote pane.
     private func upload(_ localPaths: [String]) {
         guard let id = active, remote.connection == id, !remote.path.isEmpty else {
-            log.append("업로드하려면 먼저 서버에 접속해 주세요", tone: .warn)
+            log.append(L("업로드하려면 먼저 서버에 접속해 주세요"), tone: .warn)
             return
         }
         let target = remote.path
@@ -261,7 +354,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         Task {
             do {
                 let ids = try await core.upload(connection: id, localPaths: localPaths, remoteDir: target, onConflict: onConflict)
-                log.append("업로드 \(ids.count)개를 대기열에 넣었어요 → \(target)")
+                log.append(L("업로드 %@개를 대기열에 넣었어요 → %@", "\(ids.count)", "\(target)"))
                 await remote.refresh()   // folders are created up front
             } catch {
                 log.append(UserMessage.describe(error), tone: .error)
@@ -277,7 +370,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         Task {
             do {
                 let ids = try await core.download(connection: id, remotePaths: remotePaths, localDir: target, onConflict: onConflict)
-                log.append("다운로드 \(ids.count)개를 대기열에 넣었어요 → \(target)")
+                log.append(L("다운로드 %@개를 대기열에 넣었어요 → %@", "\(ids.count)", "\(target)"))
                 local.refresh()
             } catch {
                 log.append(UserMessage.describe(error), tone: .error)
@@ -309,7 +402,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
     private func updateAwake() {
         if transferList.hasActive, awake == nil {
             awake = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated],
-                                                          reason: "jena-file 파일 전송 중")
+                                                          reason: L("jena-file 파일 전송 중"))
         } else if !transferList.hasActive, let a = awake {
             ProcessInfo.processInfo.endActivity(a)
             awake = nil
@@ -320,15 +413,15 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
 
     private func askInternalServer(via: UInt64) {
         let alert = NSAlert()
-        alert.messageText = "내부 서버 열기"
-        alert.informativeText = "\(open[via] ?? "이 서버")를 거쳐 접속해요. bastion 비밀번호는 다시 묻지 않아요."
+        alert.messageText = L("내부 서버 열기")
+        alert.informativeText = L("%@를 거쳐 접속해요. bastion 비밀번호는 다시 묻지 않아요.", "\(open[via] ?? L("이 서버"))")
         let fields = NSStackView()
         fields.orientation = .vertical
         fields.alignment = .leading
         let host = NSTextField(string: "")
-        host.placeholderString = "user@내부서버:22"
+        host.placeholderString = L("user@내부서버:22")
         let password = NSSecureTextField(string: "")
-        password.placeholderString = "비밀번호 (비워 두면 접속할 때 물어요)"
+        password.placeholderString = L("비밀번호 (비워 두면 접속할 때 물어요)")
         for f in [host, password] {
             f.translatesAutoresizingMaskIntoConstraints = false
             f.widthAnchor.constraint(equalToConstant: 280).isActive = true
@@ -337,12 +430,12 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
         fields.frame = NSRect(x: 0, y: 0, width: 280, height: 56)
         alert.accessoryView = fields
         alert.window.initialFirstResponder = host
-        alert.addButton(withTitle: "접속")
-        alert.addButton(withTitle: "취소")
+        alert.addButton(withTitle: L("접속"))
+        alert.addButton(withTitle: L("취소"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
             guard let target = QuickConnectInput.parse(host: host.stringValue, user: "", port: "") else {
-                self.log.append("내부 서버를 user@host:port 형식으로 입력해 주세요", tone: .warn)
+                self.log.append(L("내부 서버를 user@host:port 형식으로 입력해 주세요"), tone: .warn)
                 return
             }
             self.attempt = Attempt()
@@ -355,10 +448,10 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
 
     private func offerPasswordChange(_ target: Endpoint, title: String, via: Via?, bastionTitle: String?) {
         let alert = NSAlert()
-        alert.messageText = "비밀번호가 만료됐어요"
-        alert.informativeText = "\(title) 계정의 비밀번호를 바꿔야 접속할 수 있어요.\n터미널을 열어 드릴게요. 서버가 현재 비밀번호와 새 비밀번호를 물어요."
-        alert.addButton(withTitle: "터미널에서 변경")
-        alert.addButton(withTitle: "닫기")
+        alert.messageText = L("비밀번호가 만료됐어요")
+        alert.informativeText = L("%@ 계정의 비밀번호를 바꿔야 접속할 수 있어요.\n터미널을 열어 드릴게요. 서버가 현재 비밀번호와 새 비밀번호를 물어요.", "\(title)")
+        alert.addButton(withTitle: L("터미널에서 변경"))
+        alert.addButton(withTitle: L("닫기"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
             // Same route; passwords are asked again (we never keep typed ones around).
@@ -376,32 +469,48 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
             // The core logs in English for diagnostics; the UI writes its own Korean
             // lines from state changes and errors, so only surface core warnings here.
             if level == .warn { log.append(message, tone: .warn) }
-        case .promptRequested(let prompt, _, let hop, let kind):
-            prompts.present(prompt: prompt, hop: hop, kind: kind)
+        case .promptRequested(let prompt, let connection, let hop, let kind):
+            prompts.present(prompt: prompt, connection: connection, hop: hop, kind: kind)
         case .transfer(let info):
             transferList.update(info)
             updateAwake()
+            schedulePendingSave()
             if case .failed(let m) = info.state {
-                log.append("전송 실패: \((info.remotePath as NSString).lastPathComponent) — \(m)", tone: .error)
+                log.append(L("전송 실패: %@ — %@", "\((info.remotePath as NSString).lastPathComponent)", "\(m)"), tone: .error)
             }
         case .stateChanged(let id, let state):
             switch state {
             case .connecting(let step):
-                status.stringValue = "연결 중… (\(stepText(step)))"
+                status.stringValue = L("연결 중… (%@)", "\(stepText(step))")
+            case .reconnecting(let attempt, let max):
+                if attempt == 1, let title = open[id] {
+                    log.append(L("연결이 끊겼어요 · %@ — 다시 연결하는 중…", "\(title)"), tone: .warn)
+                }
+                reconnecting.insert(id)
+                status.stringValue = L("다시 연결 중… (%@/%@)", "\(attempt)", "\(max)")
             case .ready:
-                break   // logged by connect() with a readable title
+                // First connects are logged by connect() with a readable title.
+                guard reconnecting.remove(id) != nil else { break }
+                log.append(L("다시 연결됐어요 · %@", "\(open[id] ?? "")"))
+                terminals.reconnected(id)
+                if active == id { Task { await remote.refresh() } }
+                refresh()
             case .failed(let error):
                 if open[id] != nil { log.append(UserMessage.describe(error), tone: .error) }
                 closed(id)
             case .closed:
-                if let title = open[id] { log.append("연결을 끊었어요 · \(title)") }
+                if let title = open[id] { log.append(L("연결을 끊었어요 · %@", "\(title)")) }
                 closed(id)
             }
         }
     }
 
     private func closed(_ id: UInt64) {
+        secrets[id] = nil
+        reconnecting.remove(id)
         guard open.removeValue(forKey: id) != nil else { return }
+        schedulePendingSave()   // keep failed transfers' keys before forgetting the route
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.keys[id] = nil }
         terminals.disconnected(id)
         if active == id {
             active = nil
@@ -413,15 +522,15 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
 
     private func stepText(_ step: ConnectStep) -> String {
         switch step {
-        case .dialing: "접속"
-        case .auth: "인증"
-        case .sftp: "SFTP 시작"
+        case .dialing: L("접속")
+        case .auth: L("인증")
+        case .sftp: L("SFTP 시작")
         }
     }
 
     private func refresh() {
         quickConnect.setConnected(!open.isEmpty, busy: busy)
-        let state = active.flatMap { open[$0] }.map { "연결됨: \($0)" } ?? (open.isEmpty ? "연결 안 됨" : "연결됨")
+        let state = active.flatMap { open[$0] }.map { L("연결됨: %@", "\($0)") } ?? (open.isEmpty ? L("연결 안 됨") : L("연결됨"))
         status.stringValue = "core \(CoreInfo.version) · \(state)"
     }
 
@@ -444,10 +553,10 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         guard id == Self.serversItem else { return nil }
         let item = NSToolbarItem(itemIdentifier: id)
-        item.label = "서버 관리"
-        item.paletteLabel = "서버 관리"
-        item.toolTip = "저장된 서버 (⌘K)"
-        item.image = NSImage(systemSymbolName: "server.rack", accessibilityDescription: "서버 관리")
+        item.label = L("서버 관리")
+        item.paletteLabel = L("서버 관리")
+        item.toolTip = L("저장된 서버 (⌘K)")
+        item.image = NSImage(systemSymbolName: "server.rack", accessibilityDescription: L("서버 관리"))
         item.target = self
         item.action = #selector(showServerManager(_:))
         return item
@@ -473,7 +582,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
 
     @objc func showAbout(_ sender: Any?) {
         let credits = NSAttributedString(
-            string: "원격 파일 전송과 터미널을 한 화면에서.\ncore \(CoreInfo.version) · MIT License\ngithub.com/jenalab-com/jena-file",
+            string: L("원격 파일 전송과 터미널을 한 화면에서.\ncore %@ · MIT License\ngithub.com/jenalab-com/jena-file", "\(CoreInfo.version)"),
             attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor])
         NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "jena-file", .credits: credits])
     }

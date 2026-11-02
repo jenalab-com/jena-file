@@ -98,7 +98,14 @@ pub(crate) struct Session {
 pub(crate) struct Tunnel(russh::ChannelStream<client::Msg>);
 
 fn client_config() -> Arc<client::Config> {
-    Arc::new(client::Config { window_size: CHANNEL_WINDOW, ..Default::default() })
+    Arc::new(client::Config {
+        window_size: CHANNEL_WINDOW,
+        // Notice a silently dead link (no RST, e.g. Wi-Fi gone) within ~30 s so
+        // reconnect can start (AC-5).
+        keepalive_interval: Some(std::time::Duration::from_secs(10)),
+        keepalive_max: 3,
+        ..Default::default()
+    })
 }
 
 fn sftp_config() -> russh_sftp::client::Config {

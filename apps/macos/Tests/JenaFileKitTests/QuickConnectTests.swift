@@ -72,6 +72,8 @@ final class DropPathsTests: XCTestCase {
 }
 
 final class QuickConnectFillTests: XCTestCase {
+    override func setUp() { Localization.useEnglish = false }
+
     /// The author's `ssh -L` habit (example addresses).
     func testLocalForwardCommandFillsBastionAndTarget() throws {
         let parsed = try XCTUnwrap(parseSshCommand(text: "ssh -L 2222:10.0.2.6:22 ops@203.0.113.10"))

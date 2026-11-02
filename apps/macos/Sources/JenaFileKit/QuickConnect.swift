@@ -54,11 +54,11 @@ public struct QuickConnectFill: Equatable {
             return b.user.map { "\($0)@\(h)" } ?? h
         }
         var parts: [String] = []
-        if let bastion { parts.append("bastion \(bastion) 경유") }
-        parts.append("서버 \(t.host):\(t.port)")
-        if let p = parsed.droppedLocalPort { parts.append("로컬 포트 \(p)는 이제 필요 없어요") }
-        if t.user == nil { parts.append("서버 사용자 이름을 입력해 주세요") }
-        note = "명령을 해석했어요: " + parts.joined(separator: " · ")
+        if let bastion { parts.append(L("bastion %@ 경유", "\(bastion)")) }
+        parts.append(L("서버 %@:%@", "\(t.host)", "\(t.port)"))
+        if let p = parsed.droppedLocalPort { parts.append(L("로컬 포트 %@는 이제 필요 없어요", "\(p)")) }
+        if t.user == nil { parts.append(L("서버 사용자 이름을 입력해 주세요")) }
+        note = L("명령을 해석했어요: ") + parts.joined(separator: " · ")
     }
 
     public init(host: String, user: String, port: String, bastion: String?, note: String) {

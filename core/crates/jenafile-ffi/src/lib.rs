@@ -137,6 +137,7 @@ pub enum ConnectStep {
 pub enum ConnectionState {
     Connecting { step: ConnectStep },
     Ready,
+    Reconnecting { attempt: u32, max: u32 },
     Failed { error: CoreError },
     Closed,
 }
@@ -159,6 +160,7 @@ pub enum TransferState {
     Queued,
     Running,
     Paused,
+    Waiting,
     Done,
     Skipped,
     Cancelled,
@@ -475,6 +477,7 @@ impl From<jc::ConnectionState> for ConnectionState {
         match s {
             jc::ConnectionState::Connecting { step } => ConnectionState::Connecting { step: step.into() },
             jc::ConnectionState::Ready => ConnectionState::Ready,
+            jc::ConnectionState::Reconnecting { attempt, max } => ConnectionState::Reconnecting { attempt, max },
             jc::ConnectionState::Failed { error } => ConnectionState::Failed { error: error.into() },
             jc::ConnectionState::Closed => ConnectionState::Closed,
         }
@@ -582,6 +585,7 @@ impl From<jc::TransferInfo> for TransferInfo {
                 jc::TransferState::Queued => TransferState::Queued,
                 jc::TransferState::Running => TransferState::Running,
                 jc::TransferState::Paused => TransferState::Paused,
+                jc::TransferState::Waiting => TransferState::Waiting,
                 jc::TransferState::Done => TransferState::Done,
                 jc::TransferState::Skipped => TransferState::Skipped,
                 jc::TransferState::Cancelled => TransferState::Cancelled,

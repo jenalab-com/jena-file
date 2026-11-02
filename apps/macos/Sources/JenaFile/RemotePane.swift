@@ -9,8 +9,8 @@ import JenaFileKit
 final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let browser: RemoteBrowser
     private let pathField = NSTextField()
-    private let upButton = FileTable.button("arrow.up", "상위 폴더")
-    private let refreshButton = FileTable.button("arrow.clockwise", "새로 고침")
+    private let upButton = FileTable.button("arrow.up", L("상위 폴더"))
+    private let refreshButton = FileTable.button("arrow.clockwise", L("새로 고침"))
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let overlay = NSTextField(wrappingLabelWithString: "")
@@ -26,7 +26,7 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     init(browser: RemoteBrowser) {
         self.browser = browser
         super.init(frame: .zero)
-        pathField.placeholderString = "원격 경로"
+        pathField.placeholderString = L("원격 경로")
         pathField.target = self
         pathField.action = #selector(goToTypedPath)
         upButton.target = self
@@ -58,13 +58,13 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.reloadData()
         switch browser.state {
         case .disconnected:
-            show("서버에 접속하면 여기에 원격 폴더가 보여요")
+            show(L("서버에 접속하면 여기에 원격 폴더가 보여요"))
         case .loading:
             table.alphaValue = 0.4   // keep the previous listing, dimmed
-            show(browser.entries.isEmpty ? "불러오는 중…" : nil)
+            show(browser.entries.isEmpty ? L("불러오는 중…") : nil)
             return
         case .loaded:
-            show(browser.entries.isEmpty ? "빈 폴더예요" : nil)
+            show(browser.entries.isEmpty ? L("빈 폴더예요") : nil)
         case .failed(let message):
             show(message, error: true)
         }
@@ -81,10 +81,10 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     private func contextMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(withTitle: "다운로드", action: #selector(downloadSelected), keyEquivalent: "").target = self
+        menu.addItem(withTitle: L("다운로드"), action: #selector(downloadSelected), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "여기서 터미널 열기", action: #selector(openTerminalHere), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "경로를 터미널에 넣기", action: #selector(insertPaths), keyEquivalent: "").target = self
+        menu.addItem(withTitle: L("여기서 터미널 열기"), action: #selector(openTerminalHere), keyEquivalent: "").target = self
+        menu.addItem(withTitle: L("경로를 터미널에 넣기"), action: #selector(insertPaths), keyEquivalent: "").target = self
         return menu
     }
 

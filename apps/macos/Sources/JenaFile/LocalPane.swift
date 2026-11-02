@@ -6,9 +6,9 @@ import JenaFileKit
 final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let browser: LocalBrowser
     private let pathField = NSTextField()
-    private let upButton = FileTable.button("arrow.up", "상위 폴더")
-    private let homeButton = FileTable.button("house", "홈 폴더")
-    private let refreshButton = FileTable.button("arrow.clockwise", "새로 고침")
+    private let upButton = FileTable.button("arrow.up", L("상위 폴더"))
+    private let homeButton = FileTable.button("house", L("홈 폴더"))
+    private let refreshButton = FileTable.button("arrow.clockwise", L("새로 고침"))
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let overlay = NSTextField(wrappingLabelWithString: "")
@@ -20,7 +20,7 @@ final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     init(browser: LocalBrowser) {
         self.browser = browser
         super.init(frame: .zero)
-        pathField.placeholderString = "로컬 경로"
+        pathField.placeholderString = L("로컬 경로")
         pathField.target = self
         pathField.action = #selector(goToTypedPath)
         for (b, sel) in [(upButton, #selector(goUp)), (homeButton, #selector(goHome)), (refreshButton, #selector(refresh))] {
@@ -37,9 +37,9 @@ final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.registerForDraggedTypes([FileTable.remotePathsType])
         table.menu = {
             let m = NSMenu()
-            m.addItem(withTitle: "업로드", action: #selector(uploadSelected), keyEquivalent: "").target = self
+            m.addItem(withTitle: L("업로드"), action: #selector(uploadSelected), keyEquivalent: "").target = self
             m.addItem(.separator())
-            m.addItem(withTitle: "숨김 파일 보기", action: #selector(toggleHidden), keyEquivalent: "").target = self
+            m.addItem(withTitle: L("숨김 파일 보기"), action: #selector(toggleHidden), keyEquivalent: "").target = self
             return m
         }()
         scroll.documentView = table
@@ -56,7 +56,7 @@ final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.reloadData()
         switch browser.state {
         case .loaded:
-            overlay.stringValue = browser.entries.isEmpty ? "빈 폴더예요" : ""
+            overlay.stringValue = browser.entries.isEmpty ? L("빈 폴더예요") : ""
             overlay.textColor = .secondaryLabelColor
         case .failed(let message):
             overlay.stringValue = message

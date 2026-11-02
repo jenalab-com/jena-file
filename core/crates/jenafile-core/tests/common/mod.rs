@@ -121,7 +121,7 @@ pub fn transfers(script: &Script) -> std::collections::BTreeMap<TransferId, Tran
 pub async fn settle(script: &Script, ids: &[TransferId]) -> Vec<TransferInfo> {
     for _ in 0..600 {
         let all = transfers(script);
-        let done: Vec<_> = ids.iter().filter_map(|id| all.get(id)).filter(|t| !matches!(t.state, TransferState::Queued | TransferState::Running)).cloned().collect();
+        let done: Vec<_> = ids.iter().filter_map(|id| all.get(id)).filter(|t| !matches!(t.state, TransferState::Queued | TransferState::Running | TransferState::Waiting)).cloned().collect();
         if done.len() == ids.len() {
             return done;
         }

@@ -32,7 +32,7 @@ public struct KeychainStore {
         if update == errSecSuccess { return true }
         var add = query(account)
         add[kSecValueData as String] = data
-        add[kSecAttrLabel as String] = "jena-file 서버 비밀번호"
+        add[kSecAttrLabel as String] = L("jena-file 서버 비밀번호")
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
