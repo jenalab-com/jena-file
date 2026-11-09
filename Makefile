@@ -2,8 +2,9 @@ APP_NAME  = JenaFile
 MAC_DIR   = apps/macos
 BUILD_DIR = build
 BUNDLE    = $(BUILD_DIR)/$(APP_NAME).app
+INSTALL_DIR = $(HOME)/Applications
 
-.PHONY: app run core test test-core test-app clean
+.PHONY: app run install uninstall core test test-core test-app clean
 
 ## Rust core → xcframework + Swift bindings
 core:
@@ -21,6 +22,18 @@ app: core
 
 run: app
 	@open $(BUNDLE)
+
+## ~/Applications 에 설치 (관리자 권한 불필요). 실행 중이면 먼저 종료한다.
+install: app
+	@osascript -e 'tell application id "com.jenalab.jenafile" to quit' >/dev/null 2>&1 || true
+	@mkdir -p $(INSTALL_DIR)
+	@rm -rf $(INSTALL_DIR)/$(APP_NAME).app
+	@cp -R $(BUNDLE) $(INSTALL_DIR)/
+	@echo "✓ 설치 완료: $(INSTALL_DIR)/$(APP_NAME).app"
+
+uninstall:
+	@rm -rf $(INSTALL_DIR)/$(APP_NAME).app
+	@echo "✓ 제거 완료: $(INSTALL_DIR)/$(APP_NAME).app (설정·서버 목록은 ~/Library/Application Support/jena-file 에 남아 있어요)"
 
 test: test-core test-app
 
