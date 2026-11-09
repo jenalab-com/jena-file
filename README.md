@@ -59,7 +59,7 @@ cargo --version                                                  # 설치 확인
 
 ```sh
 make run        # Rust 핵심 → xcframework → 앱 빌드(build/JenaFile.app) → 실행
-make install    # 빌드 후 ~/Applications/JenaFile.app 에 설치 (make uninstall 로 제거)
+make install    # 빌드 후 /Applications/JenaFile.app 에 설치 (make uninstall 로 제거)
 make test       # cargo test + swift test
 ```
 

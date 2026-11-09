@@ -2,7 +2,7 @@ APP_NAME  = JenaFile
 MAC_DIR   = apps/macos
 BUILD_DIR = build
 BUNDLE    = $(BUILD_DIR)/$(APP_NAME).app
-INSTALL_DIR = $(HOME)/Applications
+INSTALL_DIR = /Applications
 
 .PHONY: app run install uninstall core test test-core test-app clean
 
@@ -23,7 +23,7 @@ app: core
 run: app
 	@open $(BUNDLE)
 
-## ~/Applications 에 설치 (관리자 권한 불필요). 실행 중이면 먼저 종료한다.
+## /Applications 에 설치. 실행 중이면 먼저 종료한다.
 install: app
 	@osascript -e 'tell application id "com.jenalab.jenafile" to quit' >/dev/null 2>&1 || true
 	@mkdir -p $(INSTALL_DIR)
