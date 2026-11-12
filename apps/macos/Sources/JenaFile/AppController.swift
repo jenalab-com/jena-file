@@ -25,6 +25,7 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
     private var prompts: PromptPresenter!
     private var serverManager: ServerManagerWindow?
     private var settingsWindow: SettingsWindow?
+    private var helpWindow: HelpWindow?
     /// Every connection opened from this window, with a display title.
     private var open: [UInt64: String] = [:]
     /// The connection shown in the remote pane.
@@ -92,10 +93,11 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
     /// JENAFILE_DEV_VIA=user@bastion:port, JENAFILE_DEV_VIA_PASSWORD, JENAFILE_DEV_UPLOAD=/a:/b.
     func applyDevAutoConnect() {
         let env = ProcessInfo.processInfo.environment
-        // JENAFILE_DEV_SHOW=servers|settings opens that window (screenshots without clicking).
+        // JENAFILE_DEV_SHOW=servers|settings|help opens that window (screenshots without clicking).
         switch env["JENAFILE_DEV_SHOW"] {
         case "servers": showServerManager(nil)
         case "settings": showSettings(nil)
+        case "help": openHelp(nil)
         default: break
         }
         // JENAFILE_DEV_PROFILE=<saved server id> connects it like a double-click.
@@ -588,7 +590,8 @@ final class AppController: NSObject, CoreEventHandler, NSToolbarDelegate, NSMenu
     }
 
     @objc func openHelp(_ sender: Any?) {
-        NSWorkspace.shared.open(URL(string: "https://github.com/jenalab-com/jena-file#readme")!)
+        if helpWindow == nil { helpWindow = HelpWindow() }
+        helpWindow?.show()
     }
 
     @objc func newShell(_ sender: Any?) { terminals.open(startDir: nil) }

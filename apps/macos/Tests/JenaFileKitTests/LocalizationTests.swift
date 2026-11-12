@@ -41,3 +41,11 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(L("없는 문장 %@", "x"), "없는 문장 x", "unknown keys fall back to Korean")
     }
 }
+
+final class HelpContentTests: XCTestCase {
+    /// Both manuals cover the same sections, with the same number of lines in each.
+    func testKoreanAndEnglishManualsMatch() {
+        XCTAssertEqual(HelpContent.korean.map(\.lines.count), HelpContent.english.map(\.lines.count))
+        XCTAssertFalse(HelpContent.korean.isEmpty)
+    }
+}
