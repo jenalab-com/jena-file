@@ -318,6 +318,10 @@ impl Core {
         Ok(self.manager.list(connection, path).await?.into_iter().map(Into::into).collect())
     }
 
+    pub async fn rename(&self, connection: u64, from: String, to: String) -> Result<(), CoreError> {
+        Ok(self.manager.rename(connection, from, to).await?)
+    }
+
     pub async fn disconnect(&self, connection: u64) {
         self.manager.disconnect(connection).await
     }

@@ -51,6 +51,16 @@ public final class LocalBrowser {
         (path as NSString).appendingPathComponent(entry.name)
     }
 
+    /// Subfolder names of `folder` for the folder tree, hidden ones as the list shows them.
+    public func folders(at folder: String) throws -> [String] {
+        try Self.list(URL(fileURLWithPath: folder), showsHidden: showsHidden).filter(\.isDir).map(\.name)
+    }
+
+    /// Like Finder: refuses to replace an existing item.
+    public static func rename(_ from: String, to: String) throws {
+        try FileManager.default.moveItem(atPath: from, toPath: to)
+    }
+
     /// External drives, network shares and disk images the user can open — what
     /// Finder's sidebar lists under Locations. The startup disk is reached via "/".
     public static func volumes() -> [URL] {

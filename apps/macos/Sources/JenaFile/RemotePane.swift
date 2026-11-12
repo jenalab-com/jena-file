@@ -2,11 +2,12 @@ import AppKit
 import JenaFileCore
 import JenaFileKit
 
-/// Remote file pane: path bar + table, with loading / empty / error / disconnected
-/// states (기획서 §7.3). Double-click a folder to enter it. Drop Mac files here to
+/// Remote file pane: path bar, folder tree above the chosen folder's contents
+/// (FileZilla), with loading / empty / error / disconnected states (기획서 §7.3).
+/// Double-click a folder to enter it. Drop Mac files here to
 /// upload into the shown folder; drag rows to the local pane to download, or to
 /// the terminal to type their paths.
-final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
+final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
     private let browser: RemoteBrowser
     private let pathField = NSTextField()
     private let upButton = FileTable.button("arrow.up", L("상위 폴더"))
@@ -14,6 +15,12 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let overlay = NSTextField(wrappingLabelWithString: "")
+    private let tree: FolderTree
+    private var split: NSSplitView?
+    private let ratios = SplitRatios(key: "remoteTree", defaults: [0.35])
+    private var ratiosApplied = false
+    /// The tree belongs to one connection; a new one starts it over.
+    private var treeConnection: UInt64?
     /// "여기서 터미널 열기" (FR-33): folder to cd into.
     var onOpenTerminal: ((String) -> Void)?
     /// "경로를 터미널에 넣기": paths to type.
@@ -25,7 +32,16 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     init(browser: RemoteBrowser) {
         self.browser = browser
+        tree = FolderTree { [weak browser] folder in try await browser?.folders(at: folder) ?? [] }
         super.init(frame: .zero)
+        tree.onSelect = { [weak browser] path in Task { await browser?.open(path) } }
+        tree.outline.menu = {
+            let m = NSMenu()
+            m.addItem(withTitle: L("여기서 터미널 열기"), action: #selector(openTerminalHere(_:)), keyEquivalent: "").target = self
+            m.addItem(.separator())
+            FileTable.addPathItems(to: m, target: self, copy: #selector(copyPaths(_:)), rename: #selector(renameClicked(_:)))
+            return m
+        }()
         pathField.placeholderString = L("원격 경로")
         pathField.target = self
         pathField.action = #selector(goToTypedPath)
@@ -44,15 +60,29 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.menu = contextMenu()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
-        FileTable.layout(in: self, bar: [upButton, pathField, refreshButton], scroll: scroll, overlay: overlay)
+        split = FileTable.layout(in: self, bar: [upButton, pathField, refreshButton], tree: tree, scroll: scroll, overlay: overlay)
         browser.onChange = { [weak self] in self?.render() }
         render()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func layout() {
+        super.layout()
+        // Restore the tree | list divider once the pane has its real height.
+        if !ratiosApplied, let split, split.bounds.height > 100 {
+            ratiosApplied = true
+            // Not inside this layout pass: positions set here get laid over again.
+            DispatchQueue.main.async { [ratios] in ratios.apply(to: split) }
+        }
+    }
+
     private func render() {
         let connected = browser.connection != nil
+        if treeConnection != browser.connection {
+            treeConnection = browser.connection
+            tree.reset()
+        }
         pathField.stringValue = browser.path
         for c in [pathField, upButton, refreshButton] as [NSControl] { c.isEnabled = connected }
         table.reloadData()
@@ -65,6 +95,9 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
             return
         case .loaded:
             show(browser.entries.isEmpty ? L("빈 폴더예요") : nil)
+            tree.update(browser.path, folders: browser.entries.filter(\.isDir).map(\.name))
+            let path = browser.path
+            Task { await tree.reveal(path) }
         case .failed(let message):
             show(message, error: true)
         }
@@ -83,8 +116,10 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: L("다운로드"), action: #selector(downloadSelected), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: L("여기서 터미널 열기"), action: #selector(openTerminalHere), keyEquivalent: "").target = self
+        menu.addItem(withTitle: L("여기서 터미널 열기"), action: #selector(openTerminalHere(_:)), keyEquivalent: "").target = self
         menu.addItem(withTitle: L("경로를 터미널에 넣기"), action: #selector(insertPaths), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        FileTable.addPathItems(to: menu, target: self, copy: #selector(copyPaths(_:)), rename: #selector(renameClicked(_:)))
         return menu
     }
 
@@ -102,10 +137,77 @@ final class RemotePane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         if !paths.isEmpty { onDownload?(paths) }
     }
 
-    @objc private func openTerminalHere() {
+    @objc private func openTerminalHere(_ sender: NSMenuItem) {
         guard browser.connection != nil else { return }
+        if fromTree(sender) {
+            if let p = tree.clickedPath { onOpenTerminal?(p) }
+            return
+        }
         let folder = targetRows().first { browser.entries[$0].isDir }
         onOpenTerminal?(folder.map(path) ?? browser.path)
+    }
+
+    // MARK: 경로 복사 · 이름 바꾸기 (tree and list)
+
+    private func fromTree(_ item: NSMenuItem) -> Bool { item.menu === tree.outline.menu }
+
+    /// The right-clicked rows; the shown folder when the click was on empty space.
+    private func menuPaths(_ item: NSMenuItem) -> [String] {
+        if fromTree(item) { return tree.clickedPath.map { [$0] } ?? [] }
+        let rows = targetRows()
+        return rows.isEmpty ? [browser.path] : rows.map(path)
+    }
+
+    @objc private func copyPaths(_ sender: NSMenuItem) {
+        let paths = menuPaths(sender)
+        guard !paths.isEmpty else { return }
+        FileTable.copyToPasteboard(PathText.text(paths, FileTable.copyKind(sender.tag), home: browser.home))
+    }
+
+    @objc private func renameClicked(_ sender: NSMenuItem) {
+        let target: String, isDir: Bool, siblings: [String]
+        if fromTree(sender) {
+            guard let p = tree.clickedPath, p != "/" else { return }
+            (target, isDir, siblings) = (p, true, tree.siblingNames(of: p))
+        } else {
+            let rows = targetRows()
+            guard rows.count == 1 else { return }
+            let e = browser.entries[rows[0]]
+            (target, isDir, siblings) = (path(rows[0]), e.isDir, browser.entries.map(\.name))
+        }
+        let current = (target as NSString).lastPathComponent
+        FileTable.askNewName(in: window, current: current, isDir: isDir) { [weak self] name in
+            guard let self, name != current else { return }
+            if let problem = PathText.renameProblem(name, current: current, siblings: siblings) {
+                FileTable.showError(problem, in: self.window)
+                return
+            }
+            let parent = RemotePath.parent(target)
+            let to = RemotePath.join(parent, name)
+            Task {
+                do {
+                    try await self.browser.rename(target, to: to)
+                } catch {
+                    FileTable.showError(L("이름을 바꾸지 못했어요 (%@)", UserMessage.describe(error)), in: self.window)
+                    return
+                }
+                // The shown folder (or one above it) was renamed: follow it.
+                let shown = self.browser.path
+                if shown == target || shown.hasPrefix(target + "/") {
+                    await self.browser.open(to + shown.dropFirst(target.count))
+                } else {
+                    await self.browser.refresh()
+                }
+                await self.tree.reload(parent)
+            }
+        }
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard browser.connection != nil else { return false }
+        guard item.action == #selector(renameClicked(_:)) else { return true }
+        if fromTree(item) { return tree.clickedPath.map { $0 != "/" } ?? false }
+        return targetRows().count == 1
     }
 
     @objc private func insertPaths() {

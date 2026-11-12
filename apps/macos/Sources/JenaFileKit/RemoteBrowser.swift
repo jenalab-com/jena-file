@@ -13,6 +13,8 @@ public final class RemoteBrowser {
 
     public private(set) var connection: UInt64?
     public private(set) var path: String = ""
+    /// The login folder — base for 상대 경로 복사.
+    public private(set) var home: String = ""
     public private(set) var entries: [RemoteEntry] = []
     public private(set) var state: State = .disconnected
     public var onChange: (() -> Void)?
@@ -29,6 +31,7 @@ public final class RemoteBrowser {
         self.connection = connection
         do {
             let home = try await core.home(connection: connection)
+            self.home = home
             await open(startPath ?? home)
             if startPath != nil, case .failed = state { await open(home) }
         } catch {
@@ -40,6 +43,7 @@ public final class RemoteBrowser {
         connection = nil
         entries = []
         path = ""
+        home = ""
         set(.disconnected)
     }
 
@@ -59,6 +63,18 @@ public final class RemoteBrowser {
             guard token == loadToken else { return }
             set(.failed(UserMessage.describe(error)))
         }
+    }
+
+    /// Subfolder names of `folder` for the folder tree (does not change the list).
+    public func folders(at folder: String) async throws -> [String] {
+        guard let connection else { return [] }
+        return try await core.list(connection: connection, path: folder).filter(\.isDir).map(\.name)
+    }
+
+    /// The server refuses to replace an existing `to`.
+    public func rename(_ from: String, to: String) async throws {
+        guard let connection else { return }
+        try await core.rename(connection: connection, from: from, to: to)
     }
 
     public func enter(_ entry: RemoteEntry) async {

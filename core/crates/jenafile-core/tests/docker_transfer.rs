@@ -190,3 +190,19 @@ async fn settings_limit_and_default_conflict_action() {
     assert!(script.asked.lock().unwrap().is_empty(), "no prompt with a default action");
     m.disconnect(id).await;
 }
+
+/// Rename a folder; renaming onto an existing name is refused, nothing is replaced.
+#[tokio::test]
+async fn rename_folder_and_refuse_existing_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (m, _script, id) = connected(tmp.path(), 3).await;
+    let a = remote_folder(&m, id, tmp.path(), &unique("ren-a")).await;
+    let b = remote_folder(&m, id, tmp.path(), &unique("ren-b")).await;
+    let moved = format!("{a}-새 이름");
+    m.rename(id, a.clone(), moved.clone()).await.unwrap();
+    let names: Vec<String> = m.list(id, "/tmp".into()).await.unwrap().into_iter().map(|e| e.name).collect();
+    assert!(names.contains(&moved["/tmp/".len()..].to_string()) && !names.contains(&a["/tmp/".len()..].to_string()), "{names:?}");
+    assert!(m.rename(id, moved.clone(), b.clone()).await.is_err(), "existing target is not replaced");
+    assert!(m.list(id, moved).await.is_ok() && m.list(id, b).await.is_ok());
+    m.disconnect(id).await;
+}

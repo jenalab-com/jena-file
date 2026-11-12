@@ -311,6 +311,11 @@ impl Session {
         Ok(entries)
     }
 
+    /// SFTP rename: servers (OpenSSH included) refuse to replace an existing `to`.
+    pub(crate) async fn rename(&self, hop: Hop, from: &str, to: &str) -> Result<(), CoreError> {
+        self.sftp(hop)?.rename(from, to).await.map_err(|e| sftp_err(hop, e))
+    }
+
     pub(crate) async fn close(&self) {
         if let Some(sftp) = &self.sftp {
             let _ = sftp.close().await;
