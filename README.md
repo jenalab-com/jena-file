@@ -11,7 +11,7 @@
 [![Rust](https://img.shields.io/badge/core-Rust-b7410e?logo=rust)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-[왜 만드나](#왜-만드나) · [주요 기능](#주요-기능) · [빌드](#빌드) · [구조](#구조)
+[다운로드](#설치) · [왜 만드나](#왜-만드나) · [주요 기능](#주요-기능) · [빌드](#빌드) · [구조](#구조)
 
 </div>
 
@@ -29,12 +29,14 @@
 - **전송** — 대기열 동시 전송, 폴더, 같은 이름 처리(묻기·덮어쓰기·이름 바꾸기·건너뛰기), 일시정지·이어받기
 - **끊겨도 이어서** — 자동 재연결, 끊긴 전송 자동 이어받기, 앱을 다시 켜면 남은 대기열 복원
 - **서버 관리** — 그룹 트리(드래그로 이동), 비밀번호는 macOS 키체인에만 저장
-- **로컬 창** — 외장 디스크·네트워크 드라이브 바로 열기
+- **파일 창** — FileZilla처럼 위 폴더 트리 / 아래 파일 목록, 외장 디스크·네트워크 드라이브 바로 열기
+- **오른쪽 클릭** — 이름·상대 경로·절대 경로 복사, 이름 바꾸기
+- 앱 안 설명서(도움말 ⌘?)
 - 한국어 / 영어 화면
 
 ## 상태
 
-**MVP 1차 기능 완료 · 실사용 검증 중** — SFTP 직접·경유 접속, 터미널, 전송, 서버 관리까지 동작한다. 다음은 MVP 2차(FTP/FTPS, 동시 3개 연결, `~/.ssh/config` 가져오기), 그 뒤 공개 배포(서명·DMG)와 Windows.
+**v0.1.0 · MVP 1차** — SFTP 직접·경유 접속, 터미널, 전송, 서버 관리까지 동작한다. 다음은 MVP 2차(FTP/FTPS, 동시 3개 연결, `~/.ssh/config` 가져오기), 그 뒤 Developer ID 서명·공증과 Windows.
 
 | 문서 | 내용 |
 |---|---|
@@ -42,6 +44,15 @@
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 기술 구조 설계(모듈·연결 모델·동시성·저장·MVP 작업 순서) |
 | [docs/spike/2026-11-01-russh.md](docs/spike/2026-11-01-russh.md) | russh 검증 — 직접/경유 SFTP, 인증, 처리량 |
 | [docs/spike/2026-11-01-uniffi.md](docs/spike/2026-11-01-uniffi.md) | Swift ↔ Rust(UniFFI) 연결, SwiftTerm 한글 입력 |
+
+## 설치
+
+[Releases](https://github.com/jenalab-com/jena-file/releases/latest)에서 `jenaFile.dmg`를 받아 열고, `JenaFile.app`을 Applications로 끌어 넣는다. Apple Silicon(arm64), macOS 13 이상용.
+
+ad-hoc 서명이며 아직 공증되지 않았다. 처음 실행할 때 "확인되지 않은 개발자" 또는 "손상되었기 때문에 열 수 없습니다"가 뜨면 다음 중 하나로 연다.
+
+- Finder에서 `JenaFile.app`을 Control-클릭 → 열기 → 열기
+- 또는 터미널에서 `xattr -dr com.apple.quarantine /Applications/JenaFile.app`
 
 ## 빌드
 
@@ -60,6 +71,7 @@ cargo --version                                                  # 설치 확인
 ```sh
 make run        # Rust 핵심 → xcframework → 앱 빌드(build/JenaFile.app) → 실행
 make install    # 빌드 후 /Applications/JenaFile.app 에 설치 (make uninstall 로 제거)
+make dmg        # 배포용 build/jenaFile.dmg
 make test       # cargo test + swift test
 ```
 

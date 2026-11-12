@@ -3,8 +3,9 @@ MAC_DIR   = apps/macos
 BUILD_DIR = build
 BUNDLE    = $(BUILD_DIR)/$(APP_NAME).app
 INSTALL_DIR = /Applications
+DMG       = $(BUILD_DIR)/jenaFile.dmg
 
-.PHONY: app run install uninstall core test test-core test-app clean
+.PHONY: app run install uninstall dmg core test test-core test-app clean
 
 ## Rust core → xcframework + Swift bindings
 core:
@@ -34,6 +35,16 @@ install: app
 uninstall:
 	@rm -rf $(INSTALL_DIR)/$(APP_NAME).app
 	@echo "✓ 제거 완료: $(INSTALL_DIR)/$(APP_NAME).app (설정·서버 목록은 ~/Library/Application Support/jena-file 에 남아 있어요)"
+
+## 배포용 디스크 이미지 → build/jenaFile.dmg (앱 + Applications 바로가기)
+dmg: app
+	@rm -rf $(BUILD_DIR)/dmg && mkdir -p $(BUILD_DIR)/dmg
+	@cp -R $(BUNDLE) $(BUILD_DIR)/dmg/
+	@ln -s /Applications $(BUILD_DIR)/dmg/Applications
+	@xattr -cr $(BUILD_DIR)/dmg/$(APP_NAME).app
+	@hdiutil create -volname "jena-file" -srcfolder $(BUILD_DIR)/dmg -ov -format UDZO $(DMG) >/dev/null
+	@rm -rf $(BUILD_DIR)/dmg
+	@echo "✓ DMG 생성: $(DMG)"
 
 test: test-core test-app
 
