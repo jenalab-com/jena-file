@@ -62,7 +62,7 @@ The UI is shown in Korean. These are actual app captures using local Docker test
 
 ## Status
 
-**v0.1.0 · MVP phase 1** — Direct and bastion-routed SFTP, terminals, transfers and server management are working. MVP phase 2 will add FTP/FTPS, three simultaneous connections and `~/.ssh/config` import, followed by Developer ID signing, notarization and Windows support.
+**v0.1.1 · MVP phase 1** — Direct and bastion-routed SFTP, terminals, transfers and server management are working. MVP phase 2 will add FTP/FTPS, three simultaneous connections and `~/.ssh/config` import, followed by Developer ID signing, notarization and Windows support.
 
 Project documentation is currently in Korean.
 

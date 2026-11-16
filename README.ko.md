@@ -62,7 +62,7 @@ MP4: [폴더 전송](assets/transfer.mp4) · [터미널 전환](assets/terminal.
 
 ## 상태
 
-**v0.1.0 · MVP 1차** — SFTP 직접·경유 접속, 터미널, 전송, 서버 관리까지 동작한다. 다음은 MVP 2차(FTP/FTPS, 동시 3개 연결, `~/.ssh/config` 가져오기), 그 뒤 Developer ID 서명·공증과 Windows.
+**v0.1.1 · MVP 1차** — SFTP 직접·경유 접속, 터미널, 전송, 서버 관리까지 동작한다. 다음은 MVP 2차(FTP/FTPS, 동시 3개 연결, `~/.ssh/config` 가져오기), 그 뒤 Developer ID 서명·공증과 Windows.
 
 | 문서 | 내용 |
 |---|---|
