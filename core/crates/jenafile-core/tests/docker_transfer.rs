@@ -206,3 +206,49 @@ async fn rename_folder_and_refuse_existing_target() {
     assert!(m.list(id, moved).await.is_ok() && m.list(id, b).await.is_ok());
     m.disconnect(id).await;
 }
+
+/// New folder inside an existing one; an existing name is refused.
+#[tokio::test]
+async fn mkdir_creates_one_folder_and_refuses_existing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (m, _script, id) = connected(tmp.path(), 3).await;
+    let parent = remote_folder(&m, id, tmp.path(), &unique("mkdir")).await;
+    let made = format!("{parent}/새 폴더");
+    m.mkdir(id, made.clone()).await.unwrap();
+    let entries = m.list(id, parent.clone()).await.unwrap();
+    assert!(entries.iter().any(|e| e.name == "새 폴더" && e.is_dir), "{entries:?}");
+    assert!(m.mkdir(id, made).await.is_err(), "existing folder is refused");
+    assert!(m.mkdir(id, format!("{parent}/없음/하위")).await.is_err(), "missing parent is refused");
+    m.disconnect(id).await;
+}
+
+/// "Apply to all" answered once covers the whole folder tree: files that were already
+/// running (3 at once) when the question came up must not each ask again.
+#[tokio::test]
+async fn apply_to_all_covers_subfolders_with_one_question() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (m, script, id) = connected(tmp.path(), 3).await;
+    let name = unique("tree");
+    let root = tmp.path().join(&name);
+    for dir in ["", "a", "a/deep", "b"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+        for n in 0..3 {
+            fs::write(root.join(dir).join(format!("f{n}.txt")), format!("{dir}{n}")).unwrap();
+        }
+    }
+    let first = m.upload(id, vec![root.clone()], "/tmp".into(), None).await.unwrap();
+    assert_eq!(first.len(), 12);
+    assert!(settle(&script, &first).await.iter().all(|t| t.state == TransferState::Done));
+
+    // Same tree again, and the user takes a moment to answer.
+    script.asked.lock().unwrap().clear();
+    *script.held.lock().unwrap() = Some(vec![]);
+    let ids = m.upload(id, vec![root], "/tmp".into(), None).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let held = script.held.lock().unwrap().take().unwrap();
+    assert_eq!(held.len(), 1, "one question at a time");
+    assert!(m.respond(held[0], PromptAnswer::Conflict { action: ConflictAction::Overwrite, apply_to_all: true }));
+    assert!(settle(&script, &ids).await.iter().all(|t| t.state == TransferState::Done));
+    assert_eq!(script.asked.lock().unwrap().len(), 1, "no further question in any subfolder");
+    m.disconnect(id).await;
+}

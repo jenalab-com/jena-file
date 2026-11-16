@@ -61,6 +61,11 @@ public final class LocalBrowser {
         try FileManager.default.moveItem(atPath: from, toPath: to)
     }
 
+    /// One new folder; refuses an existing name.
+    public static func makeFolder(_ path: String) throws {
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false)
+    }
+
     /// External drives, network shares and disk images the user can open — what
     /// Finder's sidebar lists under Locations. The startup disk is reached via "/".
     public static func volumes() -> [URL] {

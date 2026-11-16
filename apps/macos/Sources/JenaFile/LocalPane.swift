@@ -32,7 +32,7 @@ final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMen
         tree.onSelect = { [weak browser] path in browser?.open(path) }
         tree.outline.menu = {
             let m = NSMenu()
-            FileTable.addPathItems(to: m, target: self, copy: #selector(copyPaths(_:)), rename: #selector(renameClicked(_:)))
+            FileTable.addPathItems(to: m, target: self, copy: #selector(copyPaths(_:)), rename: #selector(renameClicked(_:)), newFolder: #selector(newFolderClicked(_:)))
             return m
         }()
         pathField.placeholderString = L("로컬 경로")
@@ -54,7 +54,7 @@ final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMen
             let m = NSMenu()
             m.addItem(withTitle: L("업로드"), action: #selector(uploadSelected), keyEquivalent: "").target = self
             m.addItem(.separator())
-            FileTable.addPathItems(to: m, target: self, copy: #selector(copyPaths(_:)), rename: #selector(renameClicked(_:)))
+            FileTable.addPathItems(to: m, target: self, copy: #selector(copyPaths(_:)), rename: #selector(renameClicked(_:)), newFolder: #selector(newFolderClicked(_:)))
             m.addItem(.separator())
             m.addItem(withTitle: L("숨김 파일 보기"), action: #selector(toggleHidden), keyEquivalent: "").target = self
             return m
@@ -167,7 +167,30 @@ final class LocalPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMen
         }
     }
 
+    /// In the tree: inside the clicked folder. In the list: inside the shown folder.
+    @objc private func newFolderClicked(_ sender: NSMenuItem) {
+        let inTree = fromTree(sender)
+        guard let parent = inTree ? tree.clickedPath : browser.path else { return }
+        let siblings = parent == browser.path ? browser.entries.map(\.name) : tree.childNames(of: parent)
+        FileTable.askFolderName(in: window, parent: (parent as NSString).lastPathComponent) { [weak self] name in
+            guard let self else { return }
+            if let problem = PathText.renameProblem(name, current: "", siblings: siblings) {
+                FileTable.showError(problem, in: self.window)
+                return
+            }
+            do {
+                try LocalBrowser.makeFolder(RemotePath.join(parent, name))
+            } catch {
+                FileTable.showError(L("폴더를 만들지 못했어요 (%@)", error.localizedDescription), in: self.window)
+                return
+            }
+            if parent == self.browser.path { self.browser.refresh() }
+            Task { await self.tree.reload(parent, expand: inTree) }
+        }
+    }
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(newFolderClicked(_:)) { return !fromTree(item) || tree.clickedPath != nil }
         guard item.action == #selector(renameClicked(_:)) else { return true }
         if fromTree(item) { return tree.clickedPath.map { $0 != "/" } ?? false }
         return targetRows().count == 1

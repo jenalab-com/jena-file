@@ -36,6 +36,18 @@ public final class TransferList {
         items.contains { $0.state == .queued || $0.state == .running || $0.state == .waiting }
     }
 
+    /// The pane's status dot: is anything still moving, did something fail, or is it all over.
+    public enum Light: Equatable {
+        case active, failed, finished
+    }
+
+    /// nil with an empty list. Moving files win over a failure: red means it stopped with errors.
+    public var light: Light? {
+        if items.isEmpty { return nil }
+        if hasActive { return .active }
+        return items.contains { if case .failed = $0.state { true } else { false } } ? .failed : .finished
+    }
+
     public var summary: String {
         let running = items.filter { $0.state == .running }.count
         let queued = items.filter { $0.state == .queued }.count

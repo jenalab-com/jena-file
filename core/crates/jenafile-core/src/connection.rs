@@ -58,6 +58,7 @@ enum Command {
     Home(oneshot::Sender<Result<String, CoreError>>),
     List(String, oneshot::Sender<Result<Vec<RemoteEntry>, CoreError>>),
     Rename(String, String, oneshot::Sender<Result<(), CoreError>>),
+    Mkdir(String, oneshot::Sender<Result<(), CoreError>>),
     OpenTerminal {
         cols: u32,
         rows: u32,
@@ -222,6 +223,13 @@ impl ConnectionManager {
     pub async fn rename(&self, id: ConnectionId, from: String, to: String) -> Result<(), CoreError> {
         let (tx, rx) = oneshot::channel();
         self.send(id, Command::Rename(from, to, tx)).await?;
+        rx.await.map_err(|_| CoreError::NotConnected(id))?
+    }
+
+    /// Creates one remote folder. Fails if `path` already exists or its parent is missing.
+    pub async fn mkdir(&self, id: ConnectionId, path: String) -> Result<(), CoreError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(id, Command::Mkdir(path, tx)).await?;
         rx.await.map_err(|_| CoreError::NotConnected(id))?
     }
 
@@ -435,6 +443,7 @@ async fn serve(session: &Session, hop: Hop, rx: &mut mpsc::Receiver<Command>) ->
                 Some(Command::Home(reply)) => { let _ = reply.send(session.home(hop).await); }
                 Some(Command::List(path, reply)) => { let _ = reply.send(session.list(hop, &path).await); }
                 Some(Command::Rename(from, to, reply)) => { let _ = reply.send(session.rename(hop, &from, &to).await); }
+                Some(Command::Mkdir(path, reply)) => { let _ = reply.send(session.mkdir(hop, &path).await); }
                 Some(Command::OpenTerminal { cols, rows, start_dir, lang, sink, reply }) => {
                     let _ = reply.send(session.open_terminal(hop, cols, rows, start_dir, lang, sink).await);
                 }
@@ -461,6 +470,7 @@ fn refuse(cmd: Command, id: ConnectionId) {
         Command::Home(r) => { let _ = r.send(Err(gone())); }
         Command::List(_, r) => { let _ = r.send(Err(gone())); }
         Command::Rename(_, _, r) => { let _ = r.send(Err(gone())); }
+        Command::Mkdir(_, r) => { let _ = r.send(Err(gone())); }
         Command::OpenTerminal { reply, .. } => { let _ = reply.send(Err(gone())); }
         Command::OpenTunnel { reply, .. } => { let _ = reply.send(Err(gone())); }
         Command::Files(r) => { let _ = r.send(Err(gone())); }

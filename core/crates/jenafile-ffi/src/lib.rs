@@ -322,6 +322,10 @@ impl Core {
         Ok(self.manager.rename(connection, from, to).await?)
     }
 
+    pub async fn mkdir(&self, connection: u64, path: String) -> Result<(), CoreError> {
+        Ok(self.manager.mkdir(connection, path).await?)
+    }
+
     pub async fn disconnect(&self, connection: u64) {
         self.manager.disconnect(connection).await
     }

@@ -68,6 +68,11 @@ final class FolderTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         node(at: RemotePath.parent(path))?.children?.map(\.name) ?? []
     }
 
+    /// Subfolders of `path` known to the tree (for new-folder checks).
+    func childNames(of path: String) -> [String] {
+        node(at: path)?.children?.map(\.name) ?? []
+    }
+
     /// The list just showed `path`: keep its subfolders in the tree in step.
     func update(_ path: String, folders: [String]) {
         guard let n = node(at: path) else { return }
@@ -75,12 +80,13 @@ final class FolderTree: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
         outline.reloadItem(n, reloadChildren: true)
     }
 
-    /// Lists `path` again (after a rename inside it).
-    func reload(_ path: String) async {
+    /// Lists `path` again (after a rename or a new folder inside it); `expand` opens it too.
+    func reload(_ path: String, expand: Bool = false) async {
         guard let n = node(at: path) else { return }
         guard let names = try? await load(path) else { return }
         merge(n, names)
         outline.reloadItem(n, reloadChildren: true)
+        if expand { outline.expandItem(n) }
     }
 
     /// Open the tree down to `path` and select it, loading folders on the way.

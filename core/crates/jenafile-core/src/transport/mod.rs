@@ -316,6 +316,11 @@ impl Session {
         self.sftp(hop)?.rename(from, to).await.map_err(|e| sftp_err(hop, e))
     }
 
+    /// SFTP mkdir: one level, refused when `path` already exists.
+    pub(crate) async fn mkdir(&self, hop: Hop, path: &str) -> Result<(), CoreError> {
+        self.sftp(hop)?.create_dir(path).await.map_err(|e| sftp_err(hop, e))
+    }
+
     pub(crate) async fn close(&self) {
         if let Some(sftp) = &self.sftp {
             let _ = sftp.close().await;

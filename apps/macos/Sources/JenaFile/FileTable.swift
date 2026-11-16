@@ -112,8 +112,8 @@ enum FileTable {
         return split
     }
 
-    /// 이름 복사 · 상대 경로 복사 · 절대 경로 복사 · 이름 바꾸기… — same order in every menu.
-    static func addPathItems(to menu: NSMenu, target: AnyObject, copy: Selector, rename: Selector) {
+    /// 이름 복사 · 상대 경로 복사 · 절대 경로 복사 · 이름 바꾸기… · 새 폴더… — same order in every menu.
+    static func addPathItems(to menu: NSMenu, target: AnyObject, copy: Selector, rename: Selector, newFolder: Selector) {
         for (title, kind) in [(L("이름 복사"), 0), (L("상대 경로 복사"), 1), (L("절대 경로 복사"), 2)] {
             let item = menu.addItem(withTitle: title, action: copy, keyEquivalent: "")
             item.target = target
@@ -121,6 +121,7 @@ enum FileTable {
         }
         menu.addItem(.separator())
         menu.addItem(withTitle: L("이름 바꾸기…"), action: rename, keyEquivalent: "").target = target
+        menu.addItem(withTitle: L("새 폴더…"), action: newFolder, keyEquivalent: "").target = target
     }
 
     static func copyKind(_ tag: Int) -> PathText.Kind {
@@ -146,15 +147,27 @@ enum FileTable {
 
     /// Asks for a new name; a file's name is pre-selected without its extension (like Finder).
     static func askNewName(in window: NSWindow?, current: String, isDir: Bool, done: @escaping (String) -> Void) {
+        askName(in: window, title: L("이름 바꾸기"), info: L("\"%@\"의 새 이름", current), button: L("바꾸기"),
+                current: current, isDir: isDir, done: done)
+    }
+
+    /// Asks for the name of a folder to create inside `parent`.
+    static func askFolderName(in window: NSWindow?, parent: String, done: @escaping (String) -> Void) {
+        askName(in: window, title: L("새 폴더"), info: L("\"%@\" 안에 만들 폴더 이름", parent), button: L("만들기"),
+                current: L("새 폴더"), isDir: true, done: done)
+    }
+
+    private static func askName(in window: NSWindow?, title: String, info: String, button: String,
+                                current: String, isDir: Bool, done: @escaping (String) -> Void) {
         guard let window else { return }
         let alert = NSAlert()
-        alert.messageText = L("이름 바꾸기")
-        alert.informativeText = L("\"%@\"의 새 이름", current)
+        alert.messageText = title
+        alert.informativeText = info
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         field.stringValue = current
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        alert.addButton(withTitle: L("바꾸기"))
+        alert.addButton(withTitle: button)
         alert.addButton(withTitle: L("취소"))
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else { return }

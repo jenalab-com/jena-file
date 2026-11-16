@@ -8,6 +8,8 @@ final class TransferPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     private let list: TransferList
     private let core: Core
     private let summary = NSTextField(labelWithString: "")
+    /// Small status dot left of the title: green = moving, red = stopped with failures, gray = over.
+    private let light = NSView()
     private let clear = NSButton(title: L("완료 지우기"), target: nil, action: nil)
     private let table = NSTableView()
     private let scroll = NSScrollView()
@@ -45,7 +47,12 @@ final class TransferPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         scroll.documentView = table
         scroll.hasVerticalScroller = true
 
-        let bar = NSStackView(views: [summary, NSView(), clear])
+        light.wantsLayer = true
+        light.layer?.cornerRadius = 4
+        light.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([light.widthAnchor.constraint(equalToConstant: 8), light.heightAnchor.constraint(equalToConstant: 8)])
+        let bar = NSStackView(views: [light, summary, NSView(), clear])
+        bar.setCustomSpacing(6, after: light)
         for v in [bar, scroll, empty] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
@@ -70,8 +77,27 @@ final class TransferPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     private func render() {
         summary.stringValue = list.items.isEmpty ? L("전송") : L("전송 · ") + list.summary
         empty.isHidden = !list.items.isEmpty
+        renderLight()
         clear.isEnabled = list.items.contains { $0.state == .done || $0.state == .skipped || $0.state == .cancelled }
         table.reloadData()
+    }
+
+    private func renderLight() {
+        let state = list.light
+        light.isHidden = state == nil
+        let (color, tip): (NSColor, String) = switch state {
+        case .active: (.systemGreen, L("전송하고 있어요"))
+        case .failed: (.systemRed, L("실패한 전송이 있어요"))
+        default: (.systemGray, L("전송이 끝났어요"))
+        }
+        light.toolTip = tip
+        light.setAccessibilityLabel(tip)
+        effectiveAppearance.performAsCurrentDrawingAppearance { light.layer?.backgroundColor = color.cgColor }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        renderLight()
     }
 
     @objc private func clearFinished() {

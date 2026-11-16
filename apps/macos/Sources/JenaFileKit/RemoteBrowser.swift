@@ -77,6 +77,12 @@ public final class RemoteBrowser {
         try await core.rename(connection: connection, from: from, to: to)
     }
 
+    /// One new folder; the server refuses an existing name.
+    public func makeFolder(_ path: String) async throws {
+        guard let connection else { return }
+        try await core.mkdir(connection: connection, path: path)
+    }
+
     public func enter(_ entry: RemoteEntry) async {
         guard entry.isDir || entry.isSymlink else { return }
         await open(RemotePath.join(path, entry.name))

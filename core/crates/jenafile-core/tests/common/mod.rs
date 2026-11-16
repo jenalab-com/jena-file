@@ -19,6 +19,8 @@ pub struct Script {
     pub events: Mutex<Vec<Event>>,
     /// Answers for transfer conflicts, in order.
     pub conflicts: Mutex<Vec<PromptAnswer>>,
+    /// Some = conflict prompts are left open (a user who has not clicked yet); their ids collect here.
+    pub held: Mutex<Option<Vec<PromptId>>>,
 }
 
 impl EventSink for Script {
@@ -35,6 +37,10 @@ impl EventSink for Script {
                 }
                 PromptKind::KeyboardInteractive { .. } => PromptAnswer::Cancel,
                 PromptKind::Conflict { .. } => {
+                    if let Some(held) = self.held.lock().unwrap().as_mut() {
+                        held.push(prompt);
+                        return;
+                    }
                     let mut c = self.conflicts.lock().unwrap();
                     if c.is_empty() { PromptAnswer::Cancel } else { c.remove(0) }
                 }
@@ -53,6 +59,7 @@ pub fn setup(dir: &std::path::Path, host_key: PromptAnswer, passwords: &[&str], 
         hops: Mutex::new(vec![]),
         events: Mutex::new(vec![]),
         conflicts: Mutex::new(vec![]),
+        held: Mutex::new(None),
     });
     let config = CoreConfig { data_dir: dir.to_path_buf(), user_known_hosts: None, max_connections: max };
     let manager = ConnectionManager::new(config, script.clone());

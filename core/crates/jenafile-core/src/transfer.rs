@@ -23,10 +23,23 @@ pub(crate) const PER_CONNECTION: usize = 3;
 pub(crate) const MAX_PER_CONNECTION: usize = 10;
 const TICK: Duration = Duration::from_millis(100);
 
-/// Files enqueued together share the "apply to all" answer.
+/// Files enqueued together (a whole folder tree included) share the "apply to all" answer.
 #[derive(Default)]
 struct Batch {
     policy: Mutex<Option<ConflictAction>>,
+    /// One question at a time: files running side by side wait here, so an
+    /// "apply to all" answer reaches them instead of each asking on its own.
+    asking: tokio::sync::Mutex<()>,
+}
+
+impl Batch {
+    /// The standing answer for a destination of `size`, if it can apply.
+    /// "Resume" cannot apply to a destination bigger than the source: that is
+    /// some other file, so ask instead of silently overwriting it.
+    fn answer(&self, size: u64, source_size: u64) -> Option<ConflictAction> {
+        let policy = *self.policy.lock().unwrap();
+        policy.filter(|p| !(*p == ConflictAction::Resume && size > source_size))
+    }
 }
 
 struct Item {
@@ -89,7 +102,7 @@ impl Transfers {
         on_conflict: Option<ConflictAction>,
     ) -> Vec<TransferId> {
         self.files.lock().unwrap().insert(connection, files);
-        let batch = Arc::new(Batch { policy: Mutex::new(on_conflict) });
+        let batch = Arc::new(Batch { policy: Mutex::new(on_conflict), ..Default::default() });
         let mut ids = Vec::new();
         {
             let mut items = self.items.lock().unwrap();
@@ -306,11 +319,12 @@ impl Transfers {
             // Our own partial file (resume / retry / reconnect): continue it.
             Some((size, _)) if w.resume && size <= w.size => ConflictAction::Resume,
             Some((size, modified)) => {
-                let policy = *w.batch.policy.lock().unwrap();
-                // "Resume" cannot apply to a destination bigger than the source: that is
-                // some other file, so ask instead of silently overwriting it.
-                let policy = policy.filter(|p| !(*p == ConflictAction::Resume && size > w.size));
-                match policy {
+                let turn = match w.batch.answer(size, w.size) {
+                    Some(p) => Err(p),
+                    None => Ok(w.batch.asking.lock().await),
+                };
+                // Answered "apply to all" while this file waited for its turn?
+                match turn.as_ref().map_or_else(|p| Some(*p), |_| w.batch.answer(size, w.size)) {
                     Some(p) => p,
                     None => {
                         let kind = PromptKind::Conflict {

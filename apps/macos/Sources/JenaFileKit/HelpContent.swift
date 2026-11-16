@@ -36,6 +36,7 @@ public enum HelpContent {
         Section(title: "오른쪽 클릭 메뉴", lines: [
             "• 이름 복사 / 상대 경로 복사 / 절대 경로 복사: 여러 개를 고르면 한 줄에 하나씩 복사해요. 상대 경로는 홈 폴더(서버는 로그인한 폴더) 기준이고, 홈 밖이면 절대 경로로 복사해요. 빈 곳을 누르면 지금 폴더 경로를 복사해요.",
             "• 이름 바꾸기…: 파일·폴더 하나의 이름을 바꿔요. 같은 이름이 이미 있으면 바꾸지 않아요.",
+            "• 새 폴더…: 목록에서는 지금 보고 있는 폴더 안에, 트리에서는 누른 폴더 안에 만들어요.",
             "• 업로드 / 다운로드: 고른 항목을 반대쪽 창의 지금 폴더로 보내요.",
             "• 여기서 터미널 열기 / 경로를 터미널에 넣기(원격).",
         ]),
@@ -43,6 +44,7 @@ public enum HelpContent {
             "• 파일·폴더를 반대쪽 창으로 끌어다 놓으면 대기열에 들어가요. Finder에서 원격 창으로 끌어도 돼요.",
             "• 같은 이름이 있으면 묻기·덮어쓰기·이름 바꿔 저장·건너뛰기 중에서 골라요. 기본 동작은 설정(⌘,)에서 정해요.",
             "• 전송 칸의 오른쪽 클릭으로 일시정지·취소·이어서 받기를 해요.",
+            "• 제목 앞 동그라미: 초록은 전송 중, 빨강은 실패한 전송이 남은 채 멈춤, 회색은 끝남이에요.",
             "• 연결이 끊기면 자동으로 다시 접속하고, 끊긴 전송은 이어서 받아요. 앱을 다시 켜면 남은 대기열을 이어서 할지 물어요.",
         ]),
         Section(title: "터미널", lines: [
@@ -87,6 +89,7 @@ public enum HelpContent {
         Section(title: "Right-click menu", lines: [
             "• Copy Name / Copy Relative Path / Copy Full Path: several items copy one per line. Relative paths start from the home folder (the login folder on servers); items outside it copy as full paths. Clicking empty space copies the current folder.",
             "• Rename…: renames one file or folder. An existing name is never replaced.",
+            "• New Folder…: created in the folder being shown (list), or inside the clicked folder (tree).",
             "• Upload / Download: sends the items to the other pane's current folder.",
             "• Open Terminal Here / Insert Path in Terminal (remote).",
         ]),
@@ -94,6 +97,7 @@ public enum HelpContent {
             "• Drag files or folders to the other pane to queue them. Dragging from Finder to the remote pane works too.",
             "• When a name exists you choose Ask, Overwrite, Rename or Skip. Set the default in Settings (⌘,).",
             "• Right-click a transfer to pause, cancel or resume it.",
+            "• The dot before the title: green while transferring, red when it stopped with failures, gray when finished.",
             "• Lost connections reconnect by themselves and broken transfers resume. On the next launch the app offers to finish the remaining queue.",
         ]),
         Section(title: "Terminal", lines: [

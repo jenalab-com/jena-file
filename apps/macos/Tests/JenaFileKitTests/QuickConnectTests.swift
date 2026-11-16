@@ -106,6 +106,18 @@ final class TransferFormatTests: XCTestCase {
 
 @MainActor
 final class LocalBrowserTests: XCTestCase {
+    func testMakeFolderRefusesExistingName() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let made = root.appendingPathComponent("새 폴더").path
+        try LocalBrowser.makeFolder(made)
+        var isDir: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: made, isDirectory: &isDir) && isDir.boolValue)
+        XCTAssertThrowsError(try LocalBrowser.makeFolder(made), "existing name is refused")
+        XCTAssertThrowsError(try LocalBrowser.makeFolder(root.appendingPathComponent("없음/하위").path), "missing parent is refused")
+    }
+
     func testListsFoldersFirstAndNavigates() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("zeta"), withIntermediateDirectories: true)

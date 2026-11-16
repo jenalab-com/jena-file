@@ -30,7 +30,7 @@ Uploading files to a server behind a bastion often means opening an `ssh -L` tun
 - **Recovery after disconnects** — Automatic reconnection and interrupted transfer recovery; unfinished transfers are restored to the queue when the app restarts
 - **Server management** — Organize servers in a group tree with drag-and-drop. Passwords are stored only in macOS Keychain
 - **Folder navigation** — FileZilla-style folder trees above file lists, with quick access to external disks and network drives
-- **Context menus** — Copy names, relative paths or absolute paths, and rename files
+- **Context menus** — Copy names, relative paths or absolute paths, rename files, and create folders
 - Built-in help (⌘?)
 - Korean and English UI
 
